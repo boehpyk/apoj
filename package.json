@@ -1,0 +1,8 @@
+{
+  "name": "reverse-song-challenge",
+  "private": true,
+  "version": "0.0.1",
+  "scripts": {
+    "dev:backend": "pnpm --filter backend run dev"
+  }
+}

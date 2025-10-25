@@ -1,0 +1,16 @@
+{
+  "name": "backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "fastify": "^4.26.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.0"
+  }
+}

@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+vendor/
+bower_components/
+doc/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+out/
+*.log
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE and editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Cache and temporary files
+*.cache
+.cache/
+.temp/
+tmp/
+*.tmp
+
+# Package manager lock files (optional, uncomment if needed)
+# package-lock.json
+# yarn.lock
+# composer.lock
+

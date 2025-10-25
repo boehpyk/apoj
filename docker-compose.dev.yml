@@ -1,0 +1,61 @@
+version: '3.8'
+services:
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_DB: reverse_song
+      POSTGRES_USER: reverse_user
+      POSTGRES_PASSWORD: reverse_pass
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+  redis:
+    image: redis:7
+    ports:
+      - '6379:6379'
+  minio:
+    image: minio/minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    volumes:
+      - minio_data:/data
+  backend:
+    image: node:20-alpine
+    working_dir: /workspace/packages/backend
+    environment:
+      - CI=true
+      - PNPM_HOME=/pnpm
+    volumes:
+      - ./:/workspace
+      - pnpm-store:/pnpm
+    command: sh -c "corepack enable && pnpm install --filter backend --ignore-scripts --no-frozen-lockfile && pnpm --filter backend run dev"
+    ports:
+      - '3000:3000'
+    depends_on:
+      - postgres
+      - redis
+      - minio
+  frontend:
+    image: node:20-alpine
+    working_dir: /workspace/packages/frontend
+    environment:
+      - CI=true
+      - PNPM_HOME=/pnpm
+    volumes:
+      - ./:/workspace
+      - pnpm-store:/pnpm
+    command: sh -c "corepack enable && pnpm install --filter frontend --ignore-scripts --no-frozen-lockfile && pnpm --filter frontend run dev --host 0.0.0.0"
+    ports:
+      - '5173:5173'
+    depends_on:
+      - backend
+volumes:
+  postgres_data:
+  minio_data:
+  pnpm-store:
