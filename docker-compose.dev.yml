@@ -2,6 +2,7 @@ version: '3.8'
 services:
   postgres:
     image: postgres:13
+    container_name: apoj_postgres_dev
     environment:
       POSTGRES_DB: reverse_song
       POSTGRES_USER: reverse_user
@@ -16,6 +17,7 @@ services:
       - '6379:6379'
   minio:
     image: minio/minio
+    container_name: apoj_minio_dev
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
@@ -27,6 +29,7 @@ services:
       - minio_data:/data
   backend:
     image: node:20-alpine
+    container_name: apoj_backend_dev
     working_dir: /workspace/packages/backend
     environment:
       - CI=true
@@ -43,6 +46,7 @@ services:
       - minio
   frontend:
     image: node:20-alpine
+    container_name: apoj_frontend_dev
     working_dir: /workspace/packages/frontend
     environment:
       - CI=true

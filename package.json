@@ -3,6 +3,11 @@
   "private": true,
   "version": "0.0.1",
   "scripts": {
-    "dev:backend": "pnpm --filter backend run dev"
+    "dev:backend": "pnpm --filter backend run dev",
+    "up:dev": "docker compose -f docker-compose.dev.yml up -d",
+    "down:dev": "docker compose -f docker-compose.dev.yml down",
+    "db:migrate": "docker compose -f docker-compose.dev.yml exec backend node scripts/migrate.js",
+    "db:seed": "docker compose -f docker-compose.dev.yml exec backend node scripts/seed-songs.js",
+    "db:count": "docker compose -f docker-compose.dev.yml exec postgres psql -U reverse_user -d reverse_song -c 'SELECT COUNT(*) FROM songs;'"
   }
 }
