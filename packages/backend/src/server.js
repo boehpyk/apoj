@@ -1,17 +1,40 @@
 import Fastify from 'fastify';
 import { testConnection } from './database.js';
 import { testRedis } from './redis.js';
-import { ensureBuckets, putObject } from './storage.js';
+import { ensureBuckets } from './storage.js';
+import { createRoom, joinRoom, getRoomState } from './room-manager.js';
 
 const fastify = Fastify();
 
 fastify.get('/api/health', async () => ({ status: 'ok' }));
 
-fastify.post('/api/test-upload', async () => {
-  const content = Buffer.from('test file ' + Date.now(), 'utf-8');
-  const name = `dev-test/${Date.now()}.txt`;
-  await putObject('audio-recordings', name, content);
-  return { stored: name };
+// Room endpoints (Iteration 2)
+fastify.post('/api/rooms', async (req, reply) => {
+  try {
+    const { playerName } = req.body || {};
+    const room = await createRoom(playerName);
+    reply.send(room);
+  } catch (e) {
+    reply.code(400).send({ error: e.message });
+  }
+});
+
+fastify.post('/api/rooms/:code/join', async (req, reply) => {
+  try {
+    const { code } = req.params;
+    const { playerName } = req.body || {};
+    const room = await joinRoom(code, playerName);
+    reply.send(room);
+  } catch (e) {
+    reply.code(400).send({ error: e.message });
+  }
+});
+
+fastify.get('/api/rooms/:code', async (req, reply) => {
+  const { code } = req.params;
+  const state = await getRoomState(code.toUpperCase());
+  if (!state) return reply.code(404).send({ error: 'Not found' });
+  reply.send(state);
 });
 
 async function initInfra() {
