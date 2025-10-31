@@ -22,12 +22,13 @@
         <p class="text-xs text-gray-500">Waiting for host to start the game (needs ≥3 players).</p>
       </div>
     </div>
-    <div class="text-xs text-gray-400">Auto-refresh every 2s. Player ID: {{ playerId }}</div>
+    <div class="text-xs text-gray-400">Connection: {{ socketStatus }} · Player ID: {{ playerId }}</div>
   </div>
 </template>
 <script setup>
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useSocket } from '../composables/useSocket.js';
 
 const route = useRoute();
 const router = useRouter();
@@ -38,9 +39,10 @@ const loading = ref(true);
 const error = ref(null);
 const players = ref([]);
 const hostId = ref(null);
-let intervalId = null;
 const starting = ref(false);
 const isHost = computed(() => hostId.value && playerId === hostId.value);
+const { socket, connected, events } = useSocket(roomCode, playerId);
+const socketStatus = computed(() => connected.value ? 'ws ok' : 'ws...');
 
 async function fetchState(){
   try {
@@ -68,17 +70,31 @@ function startGame(){
   setTimeout(() => { starting.value = false; }, 800);
 }
 
+function applyRoomState(state){
+  if (!state) return;
+  players.value = state.players || [];
+  hostId.value = state.hostId;
+}
+
 onMounted(() => {
   if (!playerId) {
     router.replace('/');
     return;
   }
   fetchState();
-  intervalId = setInterval(fetchState, 2000);
+  // Socket events
+  socket.value?.on?.(events.ROOM_UPDATED, (state) => {
+    applyRoomState(state);
+  });
+  socket.value?.on?.(events.PLAYER_JOINED, () => {
+    // Will get full state shortly via ROOM_UPDATED
+  });
+  socket.value?.on?.(events.PLAYER_LEFT, () => {
+    // Could trigger state refresh later
+  });
 });
 
 onBeforeUnmount(() => {
-  if (intervalId) clearInterval(intervalId);
 });
 </script>
 <style scoped>

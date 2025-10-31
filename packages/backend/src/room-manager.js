@@ -81,3 +81,17 @@ export async function joinRoom(roomCode, playerName) {
   return { playerId: player.id, ...state };
 }
 
+export async function removePlayerFromCache(roomCode, playerId) {
+  const state = await getRoomState(roomCode);
+  if (!state) return null;
+  const before = state.players.length;
+  state.players = state.players.filter(p => p.id !== playerId);
+  // If host left, clear hostId (room effectively unusable until future improvement)
+  if (state.hostId === playerId) {
+    state.hostId = null;
+  }
+  if (state.players.length !== before) {
+    await cacheRoom(roomCode, state);
+  }
+  return state;
+}
