@@ -69,6 +69,7 @@ async function onCreate(){
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Failed');
     sessionStorage.setItem('playerId', data.playerId);
+    if (data.playerToken) sessionStorage.setItem('playerToken', data.playerToken);
     sessionStorage.setItem('roomCode', data.roomCode);
     router.push(`/room/${data.roomCode}`);
   } catch (e) {
@@ -87,6 +88,7 @@ async function onJoin(){
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Failed');
     sessionStorage.setItem('playerId', data.playerId);
+    if (data.playerToken) sessionStorage.setItem('playerToken', data.playerToken);
     sessionStorage.setItem('roomCode', data.roomCode);
     router.push(`/room/${data.roomCode}`);
   } catch (e) {

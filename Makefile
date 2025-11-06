@@ -10,3 +10,5 @@ up.prod:
 down.prod:
 	docker compose -f docker-compose.yml down
 
+health:
+	@curl -sf http://localhost:3000/api/health >/dev/null && echo 'ok' || echo 'health check failed'

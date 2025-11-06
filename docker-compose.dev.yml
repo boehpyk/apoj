@@ -1,4 +1,3 @@
-version: '3.8'
 services:
   postgres:
     image: postgres:13
@@ -28,18 +27,23 @@ services:
     volumes:
       - minio_data:/data
   backend:
-    image: node:20-alpine
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
     container_name: apoj_backend_dev
     working_dir: /workspace/packages/backend
     environment:
-      - CI=true
+      - MINIO_PUBLIC_HOST=localhost
+      - MINIO_PUBLIC_PORT=9000
       - PNPM_HOME=/pnpm
+      - CI=true
     volumes:
       - ./:/workspace
       - pnpm-store:/pnpm
     command: sh -c "corepack enable && pnpm install --filter backend --ignore-scripts --no-frozen-lockfile && pnpm --filter backend run dev"
     ports:
       - '3000:3000'
+      - '9229:9229' # Expose Node.js debug port
     depends_on:
       - postgres
       - redis

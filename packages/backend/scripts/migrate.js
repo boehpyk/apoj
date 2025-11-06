@@ -55,8 +55,27 @@ async function migrate() {
     answers JSONB DEFAULT '{}'::jsonb,
     scores JSONB DEFAULT '{}'::jsonb,
     started_at TIMESTAMP,
-    ended_at TIMESTAMP
+    ended_at TIMESTAMP,
+    phase TEXT
   )`);
+
+  // Add phase column if table existed without it (idempotent safeguard)
+  await query(`ALTER TABLE rounds ADD COLUMN IF NOT EXISTS phase TEXT`);
+
+  // Round player tracks (Iteration 4 + Iteration 6 addition reverse_player_id)
+  await query(`CREATE TABLE IF NOT EXISTS round_player_tracks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    round_id UUID REFERENCES rounds(id) ON DELETE CASCADE,
+    player_id UUID REFERENCES players(id) ON DELETE CASCADE,
+    song_id UUID REFERENCES songs(id) ON DELETE SET NULL,
+    original_path TEXT,
+    reversed_path TEXT,
+    final_path TEXT,
+    reverse_player_id UUID REFERENCES players(id) ON DELETE SET NULL,
+    status VARCHAR(40) DEFAULT 'pending_original'
+  )`);
+  // Add column if table pre-existed without it
+  await query('ALTER TABLE round_player_tracks ADD COLUMN IF NOT EXISTS reverse_player_id UUID REFERENCES players(id) ON DELETE SET NULL');
 
   console.log('[migrate] completed');
 }
@@ -65,4 +84,3 @@ migrate().then(() => process.exit(0)).catch(err => {
   console.error('[migrate] failed', err);
   process.exit(1);
 });
-

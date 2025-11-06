@@ -12,11 +12,11 @@
         <li v-for="p in players" :key="p.id" :class="{'font-semibold': p.id === hostId}">{{ p.name }}<span v-if="p.id===hostId" class="text-xs text-gray-500"> (host)</span></li>
       </ul>
       <div class="pt-4" v-if="isHost">
-        <button @click="startGame" :disabled="players.length < 3 || starting" class="px-4 py-2 rounded text-white"
-                :class="players.length < 3 || starting ? 'bg-gray-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'">
+        <button @click="startGame" :disabled="players.length < 2 || starting" class="px-4 py-2 rounded text-white"
+                :class="players.length < 2 || starting ? 'bg-gray-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'">
           {{ starting ? 'Starting...' : 'Start Game' }}
         </button>
-        <p class="text-xs text-gray-500 mt-1">Requires ≥3 players. Only host can start.</p>
+        <p class="text-xs text-gray-500 mt-1">Requires ≥2 players (≥3 recommended). Only host can start.</p>
       </div>
       <div class="pt-4" v-else>
         <p class="text-xs text-gray-500">Waiting for host to start the game (needs ≥3 players).</p>
@@ -64,10 +64,20 @@ function copyCode(){
 }
 
 function startGame(){
-  if (players.value.length < 3) return;
+  if (players.value.length < 2) return; // allow starting with 2 per iteration note
+  if (!isHost.value) return;
   starting.value = true;
-  console.log('[room] start game clicked');
-  setTimeout(() => { starting.value = false; }, 800);
+  fetch(`/api/rooms/${roomCode}/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ playerId })
+  }).then(r => r.json()).then(data => {
+    if (data.error) {
+      console.warn('[room] start error', data.error);
+    }
+  }).catch(err => console.error(err)).finally(() => {
+    starting.value = false;
+  });
 }
 
 function applyRoomState(state){
@@ -91,6 +101,9 @@ onMounted(() => {
   });
   socket.value?.on?.(events.PLAYER_LEFT, () => {
     // Could trigger state refresh later
+  });
+  socket.value?.on?.(events.GAME_STARTED, (payload) => {
+    router.push(`/game/${roomCode}`);
   });
 });
 
