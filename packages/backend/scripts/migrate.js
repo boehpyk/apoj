@@ -22,7 +22,6 @@ async function migrate() {
     room_code VARCHAR(6) UNIQUE NOT NULL,
     host_id UUID,
     status VARCHAR(20) DEFAULT 'waiting',
-    settings JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     ended_at TIMESTAMP
   )`);
@@ -33,7 +32,6 @@ async function migrate() {
     session_id UUID REFERENCES game_sessions(id) ON DELETE CASCADE,
     name VARCHAR(50) NOT NULL,
     team VARCHAR(1),
-    socket_id VARCHAR(100),
     joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   )`);
@@ -43,24 +41,12 @@ async function migrate() {
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id UUID REFERENCES game_sessions(id) ON DELETE CASCADE,
     round_number INTEGER NOT NULL,
-    song_id UUID REFERENCES songs(id),
-    performing_team VARCHAR(1) NOT NULL,
-    guessing_team VARCHAR(1) NOT NULL,
-    original_singer_id UUID,
-    reverse_singer_id UUID,
-    original_audio_url VARCHAR(512),
-    reversed_original_url VARCHAR(512),
-    reverse_singer_audio_url VARCHAR(512),
-    final_audio_url VARCHAR(512),
     answers JSONB DEFAULT '{}'::jsonb,
     scores JSONB DEFAULT '{}'::jsonb,
     started_at TIMESTAMP,
     ended_at TIMESTAMP,
-    phase TEXT
+    phase VARCHAR(128)
   )`);
-
-  // Add phase column if table existed without it (idempotent safeguard)
-  await query(`ALTER TABLE rounds ADD COLUMN IF NOT EXISTS phase TEXT`);
 
   // Round player tracks (Iteration 4 + Iteration 6 addition reverse_player_id)
   await query(`CREATE TABLE IF NOT EXISTS round_player_tracks (
@@ -72,7 +58,7 @@ async function migrate() {
     reversed_path TEXT,
     final_path TEXT,
     reverse_player_id UUID REFERENCES players(id) ON DELETE SET NULL,
-    status VARCHAR(40) DEFAULT 'pending_original'
+    status VARCHAR(40)
   )`);
   // Add column if table pre-existed without it
   await query('ALTER TABLE round_player_tracks ADD COLUMN IF NOT EXISTS reverse_player_id UUID REFERENCES players(id) ON DELETE SET NULL');

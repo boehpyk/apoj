@@ -1,8 +1,13 @@
 // Iteration 4: Round orchestration & song assignment (KISS)
-import {query} from './database.js';
-import {getRedis} from './redis.js';
-import {getRoomState as getRoomStateCached} from './room-manager.js';
-import {EVENTS} from '../../shared/constants/index.js';
+import { query } from './database.js';
+import { getRedis } from './redis.js';
+import { getRoomState } from './room-manager.js';
+import { EVENTS, STATUSES, ROUND_PHASES } from '../../shared/constants/index.js';
+import { spawn } from 'child_process';
+import { putObject } from './storage.js';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 const redis = getRedis();
 
@@ -11,52 +16,156 @@ function roundKey(roomCode) {
     return `round:${roomCode}`;
 }
 
+/**
+ * Validate input date for starting the game
+ * @param roomState
+ * @param playerId
+ */
+export function validateStartGame(roomState, playerId) {
+    if (!roomState) throw new Error('Room not found');
+    if (roomState.hostId !== playerId) throw new Error('Not host');
+    if (roomState.status !== STATUSES.WAITING) throw new Error('Already started');
+}
+
+/**
+ * Start the game: create round, assign songs, cache state
+ * @param roomCode
+ * @returns {Promise<{roomCode: string, roundId: *, phase: string, assignments: {}}>}
+ */
 export async function startGame(roomCode) {
     const code = (roomCode || '').toUpperCase();
-    const room = await getRoomStateCached(code);
+    const room = await getRoomState(code);
+
     if (!room) throw new Error('Room not found');
-    if (room.status !== 'waiting') throw new Error('Already started');
+    if (room.status !== STATUSES.WAITING) throw new Error('Already started');
     if (room.players.length < 2) throw new Error('Need at least 2 players');
 
     // Lock session status
-    await query('UPDATE game_sessions SET status = $1 WHERE room_code = $2', ['in_progress', code]);
+    await query('UPDATE game_sessions SET status = $1 WHERE room_code = $2', [STATUSES.PLAYING, code]);
 
-    // Create round 1 (legacy columns mostly unused now)
-    const roundRes = await query(
-        'INSERT INTO rounds (session_id, round_number, phase, performing_team, guessing_team) SELECT id, $1, $2, $3, $4 FROM game_sessions WHERE room_code = $5 RETURNING id',
-        [1, 'originals_recording', 'A', 'B', code]
-    );
-    const roundId = roundRes.rows[0].id;
+    // Create round 1
+    const roundId = await createRound(code);
 
-    // Fetch distinct random songs equal to player count
-    const songCount = room.players.length;
-    const songsRes = await query('SELECT id FROM songs ORDER BY random() LIMIT $1', [songCount]);
-    if (songsRes.rows.length < songCount) throw new Error('Not enough songs');
-    const songIds = songsRes.rows.map(r => r.id);
+    try {
+        const assignments = await assignSongs(room, roundId);
 
-    // Assign each player a song id (index order) and insert track rows
-    const assignments = {};
-    for (let i = 0; i < room.players.length; i++) {
-        const player = room.players[i];
-        const songId = songIds[i];
-        assignments[player.id] = songId;
-        await query('INSERT INTO round_player_tracks (round_id, player_id, song_id) VALUES ($1, $2, $3)', [roundId, player.id, songId]);
+        // Cache round state in redis
+        const state = {
+            roundId,
+            phase: ROUND_PHASES.ORIGINALS_RECORDING,
+            assignments
+        };
+        await redis.set(roundKey(code), JSON.stringify(state), 'EX', 3600);
+
+        // Update cached room status to in_progress (simple patch)
+        const updatedRoom = await getRoomState(code);
+        if (updatedRoom) {
+            updatedRoom.status = STATUSES.IN_PROGRESS;
+            await redis.set(`room:${code}`, JSON.stringify(updatedRoom), 'EX', 86400);
+        }
+
+        return {
+            roomCode: code,
+            roundId,
+            phase: state.phase,
+            assignments
+        };
+    } catch (err) {
+        throw err;
     }
-
-    // Cache round state in redis
-    const state = {roundId, phase: 'originals_recording', assignments};
-    await redis.set(roundKey(code), JSON.stringify(state), 'EX', 3600);
-
-    // Update cached room status to in_progress (simple patch)
-    const updatedRoom = await getRoomStateCached(code);
-    if (updatedRoom) {
-        updatedRoom.status = 'in_progress';
-        await redis.set(`room:${code}`, JSON.stringify(updatedRoom), 'EX', 86400);
-    }
-
-    return {roomCode: code, roundId, phase: state.phase, assignments};
 }
 
+/**
+ * Get the original song assigned to the player in the given round
+ * @param ctx
+ * @returns {Promise<{song: *, audioProxyUrl: string}>}
+ */
+export async function getAssignedOriginalSong(ctx) {
+    const trackRes = await query('SELECT song_id FROM round_player_tracks WHERE round_id = $1 AND player_id = $2', [ctx.roundId, ctx.playerId]);
+    if (!trackRes.rows.length) {
+        throw new Error('Assignment not found');
+    }
+
+    const songId = trackRes.rows[0].song_id;
+    const songRes = await query('SELECT id, title, lyrics, duration, midi_file_path FROM songs WHERE id = $1', [songId]);
+    if (!songRes.rows.length) {
+        throw new Error('Song not found');
+    }
+    const song = songRes.rows[0];
+    const audioProxyUrl = `/api/audio/song/${song.id}?roundId=${encodeURIComponent(ctx.roundId)}`;
+
+    return {
+        song,
+        audioProxyUrl
+    };
+}
+
+/**
+ * Upload original recording for the player in the given round and reverse it
+ * @param ctx
+ * @param file
+ * @returns {Promise<{roomCode: string, originalObjectName: string, reversedObjectName: string}>}
+ */
+export async function uploadOriginalRecord(ctx, file) {
+    const playerId = ctx.playerId;
+    const roundId = ctx.roundId;
+    const chunks = [];
+    let totalBytes = 0;
+
+    for await (const chunk of file.file) {
+        chunks.push(chunk);
+        totalBytes += chunk.length;
+        if (totalBytes > 10 * 1024 * 1024) throw new Error('File exceeds 10MB');
+    }
+    const buffer = Buffer.concat(chunks);
+
+    const trackCheck = await query('SELECT status FROM round_player_tracks WHERE round_id = $1 AND player_id = $2', [roundId, playerId]);
+    if (!trackCheck.rows.length) {
+        throw new Error('Track not found');
+    }
+
+    if (trackCheck.rows[0].status !== ROUND_PHASES.ORIGINALS_RECORDING) {
+        console.log('Upload rejected, status:', trackCheck.rows[0].status);
+        throw new Error('Already uploaded');
+    }
+
+    const roomRes = await query('SELECT s.room_code FROM rounds r JOIN game_sessions s ON r.session_id = s.id WHERE r.id = $1', [roundId]);
+    if (!roomRes.rows.length) throw new Error('Round not found');
+
+    const roomCode = roomRes.rows[0].room_code.toUpperCase();
+
+    const originalObjectName = `original/${roundId}/${playerId}.webm`;
+    await putObject('audio-recordings', originalObjectName, buffer, {'Content-Type': file.mimetype});
+
+    // Perform reversal now (immediate)
+    const tmpDir = os.tmpdir();
+    const tmpIn = path.join(tmpDir, `orig_${roundId}_${playerId}.webm`);
+    const tmpOut = path.join(tmpDir, `rev_${roundId}_${playerId}.webm`);
+    fs.writeFileSync(tmpIn, buffer);
+    await new Promise((resolve, reject) => {
+        const proc = spawn('ffmpeg', ['-y', '-i', tmpIn, '-af', 'areverse', tmpOut]);
+        proc.on('error', reject);
+        proc.stderr.on('data', () => {});
+        proc.on('close', code => code === 0 ? resolve() : reject(new Error('ffmpeg failed')));
+    });
+    const reversedBuf = fs.readFileSync(tmpOut);
+    const reversedObjectName = `reversed-original/${roundId}/${playerId}.webm`;
+    await putObject('audio-recordings', reversedObjectName, reversedBuf, {'Content-Type': 'audio/webm'});
+    fs.unlink(tmpIn, () => {}); fs.unlink(tmpOut, () => {});
+    await query('UPDATE round_player_tracks SET original_path = $1, reversed_path = $2, status = $3 WHERE round_id = $4 AND player_id = $5', [originalObjectName, reversedObjectName, ROUND_PHASES.ORIGINAL_REVERSED_READY, roundId, playerId]);
+
+    return {
+        roomCode,
+        originalObjectName,
+        reversedObjectName
+    };
+}
+
+/**
+ * Get the current round state for the given room code
+ * @param roomCode
+ * @returns {Promise<{roundId: *, phase: *|string, assignments: {}, statuses: {}}|any|null>}
+ */
 export async function getRoundState(roomCode) {
     const code = (roomCode || '').toUpperCase();
     const cached = await redis.get(roundKey(code));
@@ -74,7 +183,7 @@ export async function getRoundState(roomCode) {
     const roundRes = await query('SELECT r.id, r.phase FROM rounds r JOIN game_sessions s ON r.session_id = s.id WHERE s.room_code = $1 ORDER BY r.round_number DESC LIMIT 1', [code]);
     if (!roundRes.rows.length) return null;
     const roundId = roundRes.rows[0].id;
-    const phase = roundRes.rows[0].phase || 'originals_recording';
+    const phase = roundRes.rows[0].phase || ROUND_PHASES.ORIGINALS_RECORDING;
     const tracksRes = await query('SELECT player_id, song_id, status FROM round_player_tracks WHERE round_id = $1', [roundId]);
     const assignments = {};
     const statuses = {};
@@ -105,7 +214,10 @@ export function broadcastAssignments(io, roomCode, assignments, connections) {
         sockets.forEach(sock => {
             const meta = connections.get(sock.id);
             const playerId = meta?.playerId;
-            const payload = {playerIds, songId: playerId ? assignments[playerId] : null};
+            const payload = {
+                playerIds,
+                songId: playerId ? assignments[playerId] : null
+            };
             sock.emit(EVENTS.SONGS_ASSIGNED, payload);
         });
     });
@@ -115,12 +227,18 @@ export async function attemptAssignReverseRolesAndEmit(io, roomCode) {
     const code = (roomCode || '').toUpperCase();
     const round = await getRoundState(code);
     if (!round) return false;
+
+    console.log(`Attempting reverse role assignment for round ${round.roundId} in room ${code}`);
+    console.log('Current statuses:', round.statuses);
+
     // Check if all originals uploaded
-    const allUploaded = Object.values(round.statuses || {}).every(st => st === 'original_uploaded' || st === 'reversed_ready');
+    const allUploaded = Object.values(round.statuses || {}).every(st => st === ROUND_PHASES.ORIGINAL_REVERSED_READY);
     if (!allUploaded) return false;
+
     // Derangement: assign each player's original to a different player
     const playerIds = Object.keys(round.assignments);
     const shuffled = [...playerIds];
+
     // Simple Fisher-Yates shuffle until no position matches original
     function derange(arr) {
         for (let tries = 0; tries < 10; tries++) {
@@ -128,7 +246,9 @@ export async function attemptAssignReverseRolesAndEmit(io, roomCode) {
                 const j = Math.floor(Math.random() * (i + 1));
                 [arr[i], arr[j]] = [arr[j], arr[i]];
             }
-            if (arr.every((pid, idx) => pid !== playerIds[idx])) return arr;
+            if (arr.every((pid, idx) => pid !== playerIds[idx])) {
+                return arr;
+            }
         }
         // Fallback manual swap for conflicts
         for (let i = 0; i < arr.length; i++) {
@@ -140,15 +260,62 @@ export async function attemptAssignReverseRolesAndEmit(io, roomCode) {
         return arr;
     }
     derange(shuffled);
+
     // Persist reverse_player_id mapping
     for (let i = 0; i < playerIds.length; i++) {
         const originalOwner = playerIds[i];
         const reverseActor = shuffled[i];
-        await query('UPDATE round_player_tracks SET reverse_player_id = $1 WHERE round_id = $2 AND player_id = $3', [reverseActor, round.roundId, originalOwner]);
+        await query('UPDATE round_player_tracks SET reverse_player_id = $1, status = $4 WHERE round_id = $2 AND player_id = $3', [reverseActor, round.roundId, originalOwner, ROUND_PHASES.REVERSED_RECORDING]);
     }
+
     // Set phase to reversing_first (if not already)
-    await setRoundPhase(code, 'reversing_first');
+    await setRoundPhase(code, ROUND_PHASES.REVERSED_RECORDING);
+
     // Emit batch event to room once (UI can show ready to reverse recording available per assignment after actual reversal completes)
-    io.to(code).emit(EVENTS.REVERSED_READY, {roundId: round.roundId, reverseMap: playerIds.reduce((acc, owner, idx) => {acc[owner] = shuffled[idx]; return acc;}, {})});
+    io.to(code).emit(EVENTS.REVERSED_RECORDING_STARTED, {
+        roundId: round.roundId,
+        reverseMap: playerIds.reduce((acc, owner, idx) => {
+            acc[owner] = shuffled[idx]; return acc;
+        }, {})
+    });
+
     return true;
+}
+
+/**
+ * Create a new round for the given room code
+ * @param code
+ * @returns {Promise<*>}
+ */
+const createRound = async (code) => {
+    const roundResult = await query(
+        'INSERT INTO rounds (session_id, round_number, phase) SELECT id, $1, $2 FROM game_sessions WHERE room_code = $3 RETURNING id',
+        [1, ROUND_PHASES.ORIGINALS_RECORDING, code]
+    );
+    return roundResult.rows[0].id;
+}
+
+/**
+ * Assign songs to players for the round
+ * @param room
+ * @param roundId
+ * @returns {Promise<{}>}
+ */
+const assignSongs = async (room, roundId) => {
+    // Fetch distinct random songs equal to player count
+    const playersCount = room.players.length;
+    const songsRes = await query('SELECT id FROM songs ORDER BY random() LIMIT $1', [playersCount]);
+    if (songsRes.rows.length < playersCount) throw new Error('Not enough songs');
+    const songIds = songsRes.rows.map(r => r.id);
+
+    // Assign each player a song id (index order) and insert track rows
+    const assignments = {};
+    for (let i = 0; i < room.players.length; i++) {
+        const player = room.players[i];
+        const songId = songIds[i];
+        assignments[player.id] = songId;
+        await query('INSERT INTO round_player_tracks (round_id, player_id, song_id, status) VALUES ($1, $2, $3, $4)', [roundId, player.id, songId, ROUND_PHASES.ORIGINALS_RECORDING]);
+    }
+
+    return assignments;
 }

@@ -1,20 +1,36 @@
 // Room manager: create/join/get room state (KISS)
-import {query} from './database.js';
-import {getRedis} from './redis.js';
+import { query } from './database.js';
+import { getRedis } from './redis.js';
 import crypto from 'crypto';
+import { STATUSES, ROOM_TTL_SECONDS } from "../../shared/constants/index.js";
+import { storePlayerToken } from './auth.js';
 
 const redis = getRedis();
-const ROOM_TTL_SECONDS = 86400; // 24h
 
+/**
+ * Generate a random room code
+ * @returns {string}
+ */
 function generateRoomCode() {
     return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
+/**
+ * Cache room state in Redis
+ * @param roomCode
+ * @param state
+ * @returns {Promise<*>}
+ */
 async function cacheRoom(roomCode, state) {
     await redis.set(`room:${roomCode}`, JSON.stringify(state), 'EX', ROOM_TTL_SECONDS);
     return state;
 }
 
+/**
+ * Load room state from database and cache it
+ * @param roomCode
+ * @returns {Promise<{roomCode: *, hostId: *, status: *, players: {id: *, name: *}[]}|null>}
+ */
 async function hydrateRoom(roomCode) {
     const sessRes = await query('SELECT id, host_id, status FROM game_sessions WHERE room_code = $1', [roomCode]);
     if (!sessRes.rows.length) return null;
@@ -22,34 +38,34 @@ async function hydrateRoom(roomCode) {
     const playersRes = await query('SELECT id, name FROM players WHERE session_id = $1 ORDER BY joined_at ASC', [session.id]);
     const state = {
         roomCode,
+        sessId: session.id,
         hostId: session.host_id,
         status: session.status,
-        players: playersRes.rows.map(r => ({id: r.id, name: r.name}))
+        players: playersRes.rows.map(r => ({
+            id: r.id,
+            name: r.name
+        }))
     };
     await cacheRoom(roomCode, state);
     return state;
 }
 
+/**
+ * Get the current state of a room from cache or database
+ * @param roomCode
+ * @returns {Promise<null|{roomCode: *, hostId: *, status: *, players: {id: *, name: *}[]}|any>}
+ */
 export async function getRoomState(roomCode) {
     const cached = await redis.get(`room:${roomCode}`);
     if (cached) return JSON.parse(cached);
     return hydrateRoom(roomCode);
 }
 
-async function storePlayerToken(playerId, roomCode) {
-    const token = crypto.randomBytes(16).toString('hex');
-    // token lookup both directions for validation
-    await redis.set(`player_token:${playerId}`, JSON.stringify({token, roomCode}), 'EX', ROOM_TTL_SECONDS);
-    await redis.set(`token_lookup:${token}`, JSON.stringify({playerId, roomCode}), 'EX', ROOM_TTL_SECONDS);
-    return token;
-}
-
-export async function verifyToken(token) {
-    if (!token) return null;
-    const data = await redis.get(`token_lookup:${token}`);
-    return data ? JSON.parse(data) : null;
-}
-
+/**
+ * Create a new room with the given player as host
+ * @param { String } playerName
+ * @returns {Promise<{playerId: *, playerToken: string, roomCode: *, hostId: *, status: string, players: [{id: *, name: *}]}>}
+ */
 export async function createRoom(playerName) {
     const name = (playerName || '').trim();
     if (name.length < 3) throw new Error('Invalid player name');
@@ -59,76 +75,70 @@ export async function createRoom(playerName) {
     for (let i = 0; i < 5; i++) {
         roomCode = generateRoomCode();
         try {
-            const res = await query('INSERT INTO game_sessions (room_code, status) VALUES ($1, $2) RETURNING id', [roomCode, 'waiting']);
+            const res = await query('INSERT INTO game_sessions (room_code, status) VALUES ($1, $2) RETURNING id', [roomCode, STATUSES.WAITING]);
             sessionId = res.rows[0].id;
             break;
         } catch (e) {
             // Unique violation -> retry
-            if (i === 4) throw e;
+            if (i === 4) throw Error('Unable to generate unique room code');
         }
     }
     const playerRes = await query('INSERT INTO players (session_id, name) VALUES ($1, $2) RETURNING id, name', [sessionId, name]);
     const player = playerRes.rows[0];
     await query('UPDATE game_sessions SET host_id = $1 WHERE id = $2', [player.id, sessionId]);
-    const state = {roomCode, hostId: player.id, status: 'waiting', players: [{id: player.id, name: player.name}]};
+    const state = {
+        roomCode,
+        sessId: sessionId,
+        hostId: player.id,
+        status: STATUSES.WAITING,
+        players: [
+            {id: player.id, name: player.name}
+        ]
+    };
     await cacheRoom(roomCode, state);
     const token = await storePlayerToken(player.id, roomCode);
-    return {playerId: player.id, playerToken: token, ...state};
+    return {
+        playerId: player.id,
+        playerToken: token,
+        ...state
+    };
 }
 
+/**
+ * Join an existing room
+ * @param roomCode
+ * @param playerName
+ * @returns {Promise<{playerId: *, playerToken: string}>}
+ */
 export async function joinRoom(roomCode, playerName) {
     const code = (roomCode || '').toUpperCase();
+
     if (code.length !== 6) throw new Error('Invalid room code');
+
     const name = (playerName || '').trim();
+
     if (name.length < 3) throw new Error('Invalid player name');
+
     let state = await getRoomState(code);
+
     if (!state) throw new Error('Room not found');
-    if (state.status !== 'waiting') throw new Error('Room locked');
+
+    if (state.status !== STATUSES.WAITING) throw new Error('Room locked');
+
     // Reject duplicate names (case-insensitive exact)
     if (state.players.some(p => p.name.toLowerCase() === name.toLowerCase())) throw new Error('Name taken');
-    // Load session id from DB for insert
-    const sessRes = await query('SELECT id FROM game_sessions WHERE room_code = $1', [code]);
-    if (!sessRes.rows.length) throw new Error('Room not found');
-    const sessionId = sessRes.rows[0].id;
-    const playerRes = await query('INSERT INTO players (session_id, name) VALUES ($1, $2) RETURNING id, name', [sessionId, name]);
+
+    const playerRes = await query('INSERT INTO players (session_id, name) VALUES ($1, $2) RETURNING id, name', [state.sessId, name]);
     const player = playerRes.rows[0];
-    state.players.push({id: player.id, name: player.name});
+    state.players.push({
+        id: player.id,
+        name: player.name
+    });
     await cacheRoom(code, state);
     const token = await storePlayerToken(player.id, code);
-    return {playerId: player.id, playerToken: token, ...state};
-}
-
-export async function removePlayerFromCache(roomCode, playerId) {
-    const state = await getRoomState(roomCode);
-    if (!state) return null;
-    const before = state.players.length;
-    state.players = state.players.filter(p => p.id !== playerId);
-    // If host left, clear hostId (room effectively unusable until future improvement)
-    if (state.hostId === playerId) {
-        state.hostId = null;
-    }
-    if (state.players.length !== before) {
-        await cacheRoom(roomCode, state);
-    }
-    return state;
-}
-
-export async function invalidatePlayerToken(playerId) {
-    const data = await redis.get(`player_token:${playerId}`);
-    if (!data) return false;
-    const parsed = JSON.parse(data);
-    await redis.del(`player_token:${playerId}`);
-    await redis.del(`token_lookup:${parsed.token}`);
-    return true;
-}
-
-export async function invalidateAllRoomTokens(roomCode) {
-    const state = await getRoomState(roomCode);
-    if (!state) return 0;
-    let count = 0;
-    for (const p of state.players) {
-        const ok = await invalidatePlayerToken(p.id);
-        if (ok) count++;
-    }
-    return count;
+    return {
+        playerId: player.id,
+        playerToken: token,
+        ...state
+    };
 }

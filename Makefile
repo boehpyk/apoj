@@ -12,3 +12,13 @@ down.prod:
 
 health:
 	@curl -sf http://localhost:3000/api/health >/dev/null && echo 'ok' || echo 'health check failed'
+
+logs.backend:
+	docker logs -f apoj_backend_dev
+
+logs.frontend:
+	docker logs -f apoj_frontend_dev
+
+logs.all:
+	docker compose -f docker-compose.dev.yml logs -f
+

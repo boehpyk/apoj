@@ -1,33 +1,44 @@
 import Fastify from 'fastify';
-import {Server} from 'socket.io';
+import { Server } from 'socket.io';
 import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
 
-import {testConnection} from './database.js';
-import {testRedis} from './redis.js';
-import {ensureBuckets} from './storage.js';
+import { testConnection, query } from './database.js';
+import { testRedis } from './redis.js';
+import { ensureBuckets, getObjectStream } from './storage.js';
 import {
     createRoom,
     joinRoom,
     getRoomState,
-    verifyToken,
-    invalidateAllRoomTokens
 } from './room-manager.js';
-import {startGame, getRoundState, broadcastAssignments, attemptAssignReverseRolesAndEmit} from './game-controller.js';
-import {EVENTS} from '../../shared/constants/index.js';
-import {putObject, getObjectStream} from './storage.js';
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
+import {
+    validateStartGame,
+    startGame,
+    getRoundState,
+    broadcastAssignments,
+    attemptAssignReverseRolesAndEmit,
+    getAssignedOriginalSong,
+    uploadOriginalRecord
+} from './game-controller.js';
+import {
+    validatePlayer,
+    requireToken,
+    invalidateAllRoomTokens,
+    resolvePlayerContext
+} from './auth.js';
+import { validateInputFile } from "./validators.js";
+import {EVENTS, ROUND_PHASES, STATUSES} from '../../shared/constants/index.js';
 
 const fastify = Fastify();
 
 fastify.get('/api/health', async () => ({status: 'ok'}));
 
-// Room endpoints (Iteration 2)
+/**
+ * Create room endpoint
+ */
 fastify.post('/api/rooms', async (req, reply) => {
     try {
-        const {playerName} = req.body || {};
+        const { playerName } = req.body || {};
         const room = await createRoom(playerName);
         reply.send(room);
     } catch (e) {
@@ -35,10 +46,13 @@ fastify.post('/api/rooms', async (req, reply) => {
     }
 });
 
+/**
+ * Join room endpoint
+ */
 fastify.post('/api/rooms/:code/join', async (req, reply) => {
     try {
-        const {code} = req.params;
-        const {playerName} = req.body || {};
+        const { code } = req.params;
+        const { playerName } = req.body || {};
         const room = await joinRoom(code, playerName);
         reply.send(room);
     } catch (e) {
@@ -46,34 +60,50 @@ fastify.post('/api/rooms/:code/join', async (req, reply) => {
     }
 });
 
+/**
+ * Get room state endpoint
+ */
 fastify.get('/api/rooms/:code', async (req, reply) => {
-    const {code} = req.params;
+    const { code } = req.params;
     const state = await getRoomState(code.toUpperCase());
-    if (!state) return reply.code(404).send({error: 'Not found'});
+    if ( !state ) return reply.code(404).send({error: 'Not found'});
     reply.send(state);
 });
 
-// Start game endpoint (Iteration 4)
+/**
+ * Start game endpoint
+ */
 fastify.post('/api/rooms/:code/start', async (req, reply) => {
+    const { code } = req.params;
+    const { playerId } = req.body || {};
+    const roomState = await getRoomState(code.toUpperCase());
+
     try {
-        const {code} = req.params;
-        const {playerId} = req.body || {};
-        const roomState = await getRoomState(code.toUpperCase());
-        if (!roomState) throw new Error('Room not found');
-        if (roomState.hostId !== playerId) throw new Error('Not host');
-        if (roomState.status !== 'waiting') throw new Error('Already started');
-        const started = await startGame(code);
-        if (io) {
-            io.to(code.toUpperCase()).emit(EVENTS.GAME_STARTED, {
-                roomCode: started.roomCode,
-                roundId: started.roundId,
-                phase: started.phase
-            });
-            broadcastAssignments(io, code.toUpperCase(), started.assignments, connections);
-        }
-        reply.send(started);
+        validateStartGame(roomState, playerId);
     } catch (e) {
         reply.code(400).send({error: e.message});
+    }
+
+    if (! io) {
+        reply.code(500).send({
+            error: 'WebSocket not initialized'
+        });
+    }
+
+    try {
+        const started = await startGame(code);
+
+        io.to(code.toUpperCase()).emit(EVENTS.GAME_STARTED, {
+            roomCode: started.roomCode,
+            roundId: started.roundId,
+            phase: started.phase
+        });
+        broadcastAssignments(io, code.toUpperCase(), started.assignments, connections);
+        reply.send(started);
+    } catch (e) {
+        return reply.code(500).send({
+            error: e.message
+        });
     }
 });
 
@@ -81,135 +111,84 @@ fastify.post('/api/rooms/:code/start', async (req, reply) => {
 fastify.get('/api/rooms/:code/round', async (req, reply) => {
     const {code} = req.params;
     const round = await getRoundState(code.toUpperCase());
-    if (!round) return reply.code(404).send({error: 'Not found'});
+    if (!round) {
+        return reply.code(404).send({
+            error: 'Not found'
+        });
+    }
     reply.send(round);
 });
 
-// Secure token validation helper
-function requireToken(req, reply) {
-    const token = req.headers['x-player-token'];
-    if (!token || typeof token !== 'string') {
-        reply.code(401).send({error: 'Missing token'});
-        return null;
-    }
-    return token;
-}
-
-async function resolvePlayerContext(token, roundId) {
-    const meta = await verifyToken(token);
-    if (!meta) return null;
-    // Verify round belongs to same room
-    const db = await import('./database.js');
-    const roundRes = await db.query('SELECT r.id, s.room_code FROM rounds r JOIN game_sessions s ON r.session_id = s.id WHERE r.id = $1', [roundId]);
-    if (!roundRes.rows.length) return null;
-    const roomCode = roundRes.rows[0].room_code.toUpperCase();
-    if (roomCode !== meta.roomCode) return null;
-    return {playerId: meta.playerId, roomCode};
-}
-
-// Iteration 5: Get assigned song for player
+/**
+ * Get assigned original song for player in round
+ */
 fastify.get('/api/rounds/:roundId/song', async (req, reply) => {
-    console.log('GET /api/rounds/:roundId/song called');
+    let ctx = null;
     try {
-        const token = requireToken(req, reply);
-        if (!token) return;
-        const {roundId} = req.params;
-        const ctx = await resolvePlayerContext(token, roundId);
-        if (!ctx) {
-            return reply.code(403).send({error: 'Forbidden'});
-        }
-        const db = await import('./database.js');
-        const trackRes = await db.query('SELECT song_id FROM round_player_tracks WHERE round_id = $1 AND player_id = $2', [roundId, ctx.playerId]);
-        if (!trackRes.rows.length) throw new Error('Assignment not found');
-        const songId = trackRes.rows[0].song_id;
-        const songRes = await db.query('SELECT id, title, lyrics, duration, midi_file_path FROM songs WHERE id = $1', [songId]);
-        if (!songRes.rows.length) throw new Error('Song not found');
-        const song = songRes.rows[0];
-        const audioProxyUrl = `/api/audio/song/${song.id}?roundId=${encodeURIComponent(roundId)}`;
+        ctx = await validatePlayer(req);
+    } catch (e) {
+        return reply.code(401).send({
+            error: e.message
+        });
+    }
+
+    try {
+        const {song, audioProxyUrl} = await getAssignedOriginalSong(ctx);
         reply.send({...song, audioProxyUrl});
     } catch (e) {
-        reply.code(400).send({error: e.message});
+        reply.code(400).send({
+            error: e.message
+        });
     }
 });
 
-// Simple audio reversal using ffmpeg (KISS) placed inline for now
-import {spawn} from 'child_process';
-async function reverseAudioTemp(inputStream, tmpInputPath, outputPath) {
-    // Write stream to disk then ffmpeg areverse
-    await new Promise((resolve, reject) => {
-        const write = fs.createWriteStream(tmpInputPath);
-        inputStream.pipe(write);
-        write.on('finish', resolve);
-        write.on('error', reject);
-    });
-    await new Promise((resolve, reject) => {
-        const proc = spawn('ffmpeg', ['-y', '-i', tmpInputPath, '-af', 'areverse', outputPath]);
-        proc.on('error', reject);
-        proc.stderr.on('data', () => {});
-        proc.on('close', code => code === 0 ? resolve() : reject(new Error('ffmpeg failed')));
-    });
-}
-
-// Iteration 5: Upload original recording
+/**
+ * Upload original recording endpoint
+ */
 fastify.post('/api/rounds/:roundId/original-recording', async (req, reply) => {
-    try {
-        const token = requireToken(req, reply);
-        if (!token) return;
-        const {roundId} = req.params;
-        const ctx = await resolvePlayerContext(token, roundId);
-        if (!ctx) return reply.code(403).send({error: 'Forbidden'});
-        const playerId = ctx.playerId;
-        const file = await req.file();
-        if (!file) throw new Error('No file');
-        if (!file.mimetype.startsWith('audio')) throw new Error('Invalid type');
-        if (file.file.truncated) throw new Error('File too large');
-        const chunks = [];
-        let totalBytes = 0;
-        for await (const chunk of file.file) {
-            chunks.push(chunk);
-            totalBytes += chunk.length;
-            if (totalBytes > 10 * 1024 * 1024) throw new Error('File exceeds 10MB');
-        }
-        const buffer = Buffer.concat(chunks);
-        const db = await import('./database.js');
-        const trackCheck = await db.query('SELECT status FROM round_player_tracks WHERE round_id = $1 AND player_id = $2', [roundId, playerId]);
-        if (!trackCheck.rows.length) throw new Error('Track not found');
-        if (trackCheck.rows[0].status !== 'pending_original') throw new Error('Already uploaded');
-        const roomRes = await db.query('SELECT s.room_code FROM rounds r JOIN game_sessions s ON r.session_id = s.id WHERE r.id = $1', [roundId]);
-        if (!roomRes.rows.length) throw new Error('Round not found');
-        const roomCode = roomRes.rows[0].room_code.toUpperCase();
-        const originalObjectName = `original/${roundId}/${playerId}.webm`;
-        await putObject('audio-recordings', originalObjectName, buffer, {'Content-Type': file.mimetype});
-        // Perform reversal now (immediate)
-        const tmpDir = os.tmpdir();
-        const tmpIn = path.join(tmpDir, `orig_${roundId}_${playerId}.webm`);
-        const tmpOut = path.join(tmpDir, `rev_${roundId}_${playerId}.webm`);
-        fs.writeFileSync(tmpIn, buffer);
-        await new Promise((resolve, reject) => {
-            const proc = spawn('ffmpeg', ['-y', '-i', tmpIn, '-af', 'areverse', tmpOut]);
-            proc.on('error', reject);
-            proc.stderr.on('data', () => {});
-            proc.on('close', code => code === 0 ? resolve() : reject(new Error('ffmpeg failed')));
+    if (!io) {
+        return reply.code(500).send({
+            error: 'WebSocket not initialized'
         });
-        const reversedBuf = fs.readFileSync(tmpOut);
-        const reversedObjectName = `reversed-original/${roundId}/${playerId}.webm`;
-        await putObject('audio-recordings', reversedObjectName, reversedBuf, {'Content-Type': 'audio/webm'});
-        fs.unlink(tmpIn, () => {}); fs.unlink(tmpOut, () => {});
-        await db.query('UPDATE round_player_tracks SET original_path = $1, reversed_path = $2, status = $3 WHERE round_id = $4 AND player_id = $5', [originalObjectName, reversedObjectName, 'reversed_ready', roundId, playerId]);
-        const statusesRes = await db.query('SELECT status FROM round_player_tracks WHERE round_id = $1', [roundId]);
-        const allUploaded = statusesRes.rows.every(r => r.status === 'reversed_ready');
-        if (io) {
-            io.to(roomCode).emit(EVENTS.ORIGINAL_UPLOADED, {
-                playerId,
-                roundId,
-                uploadedCount: statusesRes.rows.filter(r => r.status === 'reversed_ready').length,
-                totalPlayers: statusesRes.rows.length
-            });
-            if (allUploaded) {
-                await attemptAssignReverseRolesAndEmit(io, roomCode);
-            }
+    }
+
+    let ctx;
+    try {
+        ctx = await validatePlayer(req);
+    } catch (e) {
+        return reply.code(401).send({
+            error: e.message
+        });
+    }
+
+    const file = await req.file();
+    try {
+        validateInputFile(file)
+    } catch (e) {
+        return reply.code(400).send({error: e.message});
+    }
+
+    try {
+        const { roomCode, originalObjectName, reversedObjectName } = await uploadOriginalRecord(ctx, file);
+        const roundId = ctx.roundId;
+        const playerId = ctx.playerId;
+
+        const statusesRes = await query('SELECT status FROM round_player_tracks WHERE round_id = $1', [roundId]);
+        const allUploaded = statusesRes.rows.every(r => r.status === ROUND_PHASES.ORIGINAL_REVERSED_READY);
+        io.to(roomCode).emit(EVENTS.ORIGINAL_UPLOADED, {
+            playerId,
+            roundId,
+            uploadedCount: statusesRes.rows.filter(r => r.status === ROUND_PHASES.ORIGINAL_REVERSED_READY).length,
+            totalPlayers: statusesRes.rows.length
+        });
+        if (allUploaded) {
+            await attemptAssignReverseRolesAndEmit(io, roomCode);
         }
-        reply.send({ok: true, original: originalObjectName, reversed: reversedObjectName});
+        reply.send({
+            ok: true,
+            original: originalObjectName,
+            reversed: reversedObjectName
+        });
     } catch (e) {
         reply.code(400).send({error: e.message});
     }
@@ -224,7 +203,7 @@ fastify.post('/api/rooms/:code/end', async (req, reply) => {
         if (!state) throw new Error('Room not found');
         if (state.hostId !== playerId) throw new Error('Not host');
         if (state.status === 'ended') throw new Error('Already ended');
-        await import('./database.js').then(m => m.query('UPDATE game_sessions SET status = $1, ended_at = NOW() WHERE room_code = $2', ['ended', code.toUpperCase()]));
+        await query('UPDATE game_sessions SET status = $1, ended_at = NOW() WHERE room_code = $2', ['ended', code.toUpperCase()]);
         const invalidated = await invalidateAllRoomTokens(code.toUpperCase());
         reply.send({ok: true, invalidated});
     } catch (e) {
@@ -242,10 +221,9 @@ fastify.get('/api/audio/song/:songId', {config: {rateLimit: {max: 5, timeWindow:
         if (!songId || !roundId) return reply.code(400).send({error: 'Missing params'});
         const ctx = await resolvePlayerContext(token, roundId);
         if (!ctx) return reply.code(403).send({error: 'Forbidden'});
-        const db = await import('./database.js');
-        const assign = await db.query('SELECT 1 FROM round_player_tracks WHERE round_id = $1 AND player_id = $2 AND song_id = $3 LIMIT 1', [roundId, ctx.playerId, songId]);
+        const assign = await query('SELECT 1 FROM round_player_tracks WHERE round_id = $1 AND player_id = $2 AND song_id = $3 LIMIT 1', [roundId, ctx.playerId, songId]);
         if (!assign.rows.length) return reply.code(403).send({error: 'Forbidden'});
-        const songRes = await db.query('SELECT midi_file_path FROM songs WHERE id = $1', [songId]);
+        const songRes = await query('SELECT midi_file_path FROM songs WHERE id = $1', [songId]);
         if (!songRes.rows.length) return reply.code(404).send({error: 'Not found'});
         const objectName = songRes.rows[0].midi_file_path;
         const stream = await getObjectStream('audio-recordings', objectName);
@@ -261,6 +239,10 @@ fastify.get('/api/audio/song/:songId', {config: {rateLimit: {max: 5, timeWindow:
     }
 });
 
+/**
+ * Initialize infrastructure: DB, Redis, Storage, WebSocket
+ * @returns {Promise<void>}
+ */
 async function initInfra() {
     const dbOk = await testConnection().catch(() => false);
     const redisOk = await testRedis();
