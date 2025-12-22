@@ -18,7 +18,8 @@ import {
     broadcastAssignments,
     attemptAssignReverseRolesAndEmit,
     getAssignedOriginalSong,
-    uploadOriginalRecord
+    uploadOriginalRecord,
+    uploadReverseRecording
 } from './game-controller.js';
 import {
     validatePlayer,
@@ -194,6 +195,64 @@ fastify.post('/api/rounds/:roundId/original-recording', async (req, reply) => {
     }
 });
 
+/**
+ * Upload reverse recording endpoint
+ */
+fastify.post('/api/rounds/:roundId/reverse-recording', async (req, reply) => {
+    const token = requireToken(req, reply);
+    if (!token) return;
+
+    const { roundId } = req.params;
+    const ctx = await resolvePlayerContext(token, roundId);
+    if (!ctx) {
+        return reply.code(403).send({
+            error: 'Forbidden: Invalid token or round'
+        });
+    }
+
+    const file = await req.file();
+    try {
+        validateInputFile(file);
+    } catch (e) {
+        return reply.code(400).send({error: e.message});
+    }
+
+    try {
+        const { roomCode, reverseRecordingObjectName, finalAudioObjectName, originalOwnerId } = await uploadReverseRecording(ctx, file);
+        const roundIdValue = ctx.roundId;
+        const playerId = ctx.playerId;
+
+        // Check if all reverse recordings are uploaded
+        const statusesRes = await query('SELECT status FROM round_player_tracks WHERE round_id = $1', [roundIdValue]);
+        const allFinalReady = statusesRes.rows.every(r => r.status === ROUND_PHASES.FINAL_AUDIO_READY);
+
+        io.to(roomCode).emit(EVENTS.REVERSE_RECORDING_UPLOADED, {
+            playerId,
+            roundId: roundIdValue,
+            originalOwnerId,
+            uploadedCount: statusesRes.rows.filter(r => r.status === ROUND_PHASES.FINAL_AUDIO_READY).length,
+            totalPlayers: statusesRes.rows.length
+        });
+
+        if (allFinalReady) {
+            // All reverse recordings done, transition to guessing phase
+            await query('UPDATE rounds SET phase = $1 WHERE id = $2', [ROUND_PHASES.GUESSING, roundIdValue]);
+            io.to(roomCode).emit(EVENTS.FINAL_AUDIO_READY, {
+                roundId: roundIdValue,
+                phase: ROUND_PHASES.GUESSING
+            });
+        }
+
+        reply.send({
+            ok: true,
+            reverseRecording: reverseRecordingObjectName,
+            finalAudio: finalAudioObjectName
+        });
+    } catch (e) {
+        reply.code(400).send({error: e.message});
+    }
+});
+
 // End game endpoint: host can end game; invalidate all tokens
 fastify.post('/api/rooms/:code/end', async (req, reply) => {
     try {
@@ -239,6 +298,38 @@ fastify.get('/api/audio/song/:songId', {config: {rateLimit: {max: 5, timeWindow:
     }
 });
 
+// Stream reversed original audio for reverse singers
+fastify.get('/api/audio/reversed/:roundId/:playerId', {config: {rateLimit: {max: 5, timeWindow: '10s'}}}, async (req, reply) => {
+    try {
+        const token = requireToken(req, reply);
+        if (!token) return;
+        const {roundId, playerId} = req.params;
+        if (!roundId || !playerId) return reply.code(400).send({error: 'Missing params'});
+
+        const ctx = await resolvePlayerContext(token, roundId);
+        if (!ctx) return reply.code(403).send({error: 'Forbidden'});
+
+        // Check if requester is assigned to reverse this player's original
+        const assign = await query(
+            'SELECT reversed_path FROM round_player_tracks WHERE round_id = $1 AND player_id = $2 AND reverse_player_id = $3',
+            [roundId, playerId, ctx.playerId]
+        );
+
+        if (!assign.rows.length || !assign.rows[0].reversed_path) {
+            return reply.code(403).send({error: 'Not assigned or not ready'});
+        }
+
+        const objectName = assign.rows[0].reversed_path;
+        const stream = await getObjectStream('audio-recordings', objectName);
+
+        reply.header('Content-Type', 'audio/webm');
+        reply.header('Cache-Control', 'no-cache');
+        return reply.send(stream);
+    } catch (e) {
+        reply.code(404).send({error: 'Not found'});
+    }
+});
+
 /**
  * Initialize infrastructure: DB, Redis, Storage, WebSocket
  * @returns {Promise<void>}
@@ -271,10 +362,12 @@ initInfra().then(() => {
                     const state = await getRoomState(roomCode.toUpperCase());
                     if (!state) return;
                     if (!state.players.some(p => p.id === playerId)) return;
+
                     socket.join(roomCode);
                     connections.set(socket.id, {roomCode, playerId});
                     socket.to(roomCode).emit(EVENTS.PLAYER_JOINED, {playerId});
                     io.to(roomCode).emit(EVENTS.ROOM_UPDATED, state);
+
                     const round = await getRoundState(roomCode.toUpperCase());
                     if (round) {
                         socket.emit(EVENTS.GAME_STARTED, {

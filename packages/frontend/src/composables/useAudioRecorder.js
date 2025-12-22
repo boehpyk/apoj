@@ -1,7 +1,8 @@
 import { ref } from 'vue';
-// Simple MediaRecorder wrapper (MVP)
+// Simple MediaRecorder wrapper (MVP) with pause/resume
 export function useAudioRecorder() {
   const isRecording = ref(false);
+  const isPaused = ref(false);
   const mediaRecorder = ref(null);
   const chunks = ref([]);
 
@@ -13,7 +14,21 @@ export function useAudioRecorder() {
     mr.start();
     mediaRecorder.value = mr;
     isRecording.value = true;
+    isPaused.value = false;
   }
+
+  function pause() {
+    if (!isRecording.value || isPaused.value || !mediaRecorder.value) return;
+    mediaRecorder.value.pause();
+    isPaused.value = true;
+  }
+
+  function resume() {
+    if (!isRecording.value || !isPaused.value || !mediaRecorder.value) return;
+    mediaRecorder.value.resume();
+    isPaused.value = false;
+  }
+
   async function stop() {
     if (!isRecording.value || !mediaRecorder.value) return null;
     return new Promise(resolve => {
@@ -23,11 +38,11 @@ export function useAudioRecorder() {
         mediaRecorder.value.stream.getTracks().forEach(t => t.stop());
         mediaRecorder.value = null;
         isRecording.value = false;
+        isPaused.value = false;
         resolve(blob);
       };
       mediaRecorder.value.stop();
     });
   }
-  return { isRecording, start, stop };
+  return { isRecording, isPaused, start, pause, resume, stop };
 }
-

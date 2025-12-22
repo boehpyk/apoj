@@ -200,7 +200,11 @@ export async function getRoundState(roomCode) {
 export async function setRoundPhase(roomCode, phase) {
     const code = (roomCode || '').toUpperCase();
     const current = await getRoundState(code);
-    if (!current) throw new Error('Round not found');
+
+    if (!current) {
+        throw new Error('Round not found');
+    }
+
     current.phase = phase;
     await redis.set(roundKey(code), JSON.stringify(current), 'EX', 3600);
     await query('UPDATE rounds SET phase = $1 WHERE id = $2', [phase, current.roundId]);
@@ -226,14 +230,17 @@ export function broadcastAssignments(io, roomCode, assignments, connections) {
 export async function attemptAssignReverseRolesAndEmit(io, roomCode) {
     const code = (roomCode || '').toUpperCase();
     const round = await getRoundState(code);
-    if (!round) return false;
 
-    console.log(`Attempting reverse role assignment for round ${round.roundId} in room ${code}`);
-    console.log('Current statuses:', round.statuses);
+    if (!round) {
+        return false;
+    }
 
     // Check if all originals uploaded
     const allUploaded = Object.values(round.statuses || {}).every(st => st === ROUND_PHASES.ORIGINAL_REVERSED_READY);
-    if (!allUploaded) return false;
+    console.log(allUploaded);
+    if (!allUploaded) {
+        return false;
+    }
 
     // Derangement: assign each player's original to a different player
     const playerIds = Object.keys(round.assignments);
@@ -275,11 +282,95 @@ export async function attemptAssignReverseRolesAndEmit(io, roomCode) {
     io.to(code).emit(EVENTS.REVERSED_RECORDING_STARTED, {
         roundId: round.roundId,
         reverseMap: playerIds.reduce((acc, owner, idx) => {
-            acc[owner] = shuffled[idx]; return acc;
+            acc[owner] = shuffled[idx];
+            return acc;
         }, {})
     });
 
     return true;
+}
+
+/**
+ * Upload reverse recording and create final audio (second reversal)
+ * @param ctx
+ * @param file
+ * @returns {Promise<{roomCode: string, reverseRecordingObjectName: string, finalAudioObjectName: string}>}
+ */
+export async function uploadReverseRecording(ctx, file) {
+    const playerId = ctx.playerId;
+    const roundId = ctx.roundId;
+    const chunks = [];
+    let totalBytes = 0;
+
+    for await (const chunk of file.file) {
+        chunks.push(chunk);
+        totalBytes += chunk.length;
+        if (totalBytes > 10 * 1024 * 1024) throw new Error('File exceeds 10MB');
+    }
+    const buffer = Buffer.concat(chunks);
+
+    // Find which original this player is reversing
+    const trackCheck = await query(
+        'SELECT player_id, status FROM round_player_tracks WHERE round_id = $1 AND reverse_player_id = $2',
+        [roundId, playerId]
+    );
+
+    if (!trackCheck.rows.length) {
+        throw new Error('No reverse assignment found');
+    }
+
+    const originalOwnerId = trackCheck.rows[0].player_id;
+    const currentStatus = trackCheck.rows[0].status;
+
+    if (currentStatus !== ROUND_PHASES.REVERSED_RECORDING) {
+        throw new Error('Not in reverse recording phase');
+    }
+
+    const roomRes = await query(
+        'SELECT s.room_code FROM rounds r JOIN game_sessions s ON r.session_id = s.id WHERE r.id = $1',
+        [roundId]
+    );
+    if (!roomRes.rows.length) throw new Error('Round not found');
+
+    const roomCode = roomRes.rows[0].room_code.toUpperCase();
+
+    // Store reverse recording
+    const reverseRecordingObjectName = `reverse-recording/${roundId}/${playerId}.webm`;
+    await putObject('audio-recordings', reverseRecordingObjectName, buffer, {'Content-Type': file.mimetype});
+
+    // Perform second reversal to create final audio
+    const tmpDir = os.tmpdir();
+    const tmpIn = path.join(tmpDir, `reverse_${roundId}_${playerId}.webm`);
+    const tmpOut = path.join(tmpDir, `final_${roundId}_${playerId}.webm`);
+
+    fs.writeFileSync(tmpIn, buffer);
+
+    await new Promise((resolve, reject) => {
+        const proc = spawn('ffmpeg', ['-y', '-i', tmpIn, '-af', 'areverse', tmpOut]);
+        proc.on('error', reject);
+        proc.stderr.on('data', () => {});
+        proc.on('close', code => code === 0 ? resolve() : reject(new Error('ffmpeg failed')));
+    });
+
+    const finalAudioBuf = fs.readFileSync(tmpOut);
+    const finalAudioObjectName = `final-audio/${roundId}/${playerId}.webm`;
+    await putObject('audio-recordings', finalAudioObjectName, finalAudioBuf, {'Content-Type': 'audio/webm'});
+
+    fs.unlink(tmpIn, () => {});
+    fs.unlink(tmpOut, () => {});
+
+    // Update track status
+    await query(
+        'UPDATE round_player_tracks SET reverse_recording_path = $1, final_audio_path = $2, status = $3 WHERE round_id = $4 AND player_id = $5',
+        [reverseRecordingObjectName, finalAudioObjectName, ROUND_PHASES.FINAL_AUDIO_READY, roundId, originalOwnerId]
+    );
+
+    return {
+        roomCode,
+        reverseRecordingObjectName,
+        finalAudioObjectName,
+        originalOwnerId
+    };
 }
 
 /**

@@ -9,7 +9,8 @@ export const EVENTS = {
     ROUND_PHASE_CHANGED: 'round_phase_changed',
     ORIGINAL_UPLOADED: 'original_uploaded',
     REVERSED_RECORDING_STARTED: 'reversed_recording_started',
-    REVERSED_READY: 'reversed_ready',
+    REVERSE_RECORDING_UPLOADED: 'reverse_recording_uploaded',
+    FINAL_AUDIO_READY: 'final_audio_ready',
     GUESSING_STARTED: 'guessing_started',
     GUESSING_ENDED: 'guessing_ended',
 };
@@ -28,7 +29,10 @@ export const ROUND_PHASES = {
     ORIGINALS_RECORDING: 'originals_recording',
     ORIGINAL_REVERSED_READY: 'originals_reversed_ready',
     REVERSED_RECORDING: 'reversed_recording',
-    REVERSED_READY: 'reversed_ready'
+    PROCESSING_FINAL_AUDIO: 'processing_final_audio',
+    FINAL_AUDIO_READY: 'final_audio_ready',
+    GUESSING: 'guessing',
+    ROUND_ENDED: 'round_ended'
 }
 
 export const ROOM_TTL_SECONDS = 86400; // 24 hours

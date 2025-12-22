@@ -1,6 +1,6 @@
-import {ref, onMounted, onBeforeUnmount} from 'vue';
-import {io} from 'socket.io-client';
-import {EVENTS} from 'shared/constants/index.js';
+import { ref, onMounted, onBeforeUnmount } from 'vue';
+import { io } from 'socket.io-client';
+import { EVENTS } from 'shared/constants/index.js';
 
 export function useSocket(roomCode, playerId) {
     const socket = ref(null);

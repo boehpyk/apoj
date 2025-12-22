@@ -48,7 +48,7 @@ async function migrate() {
     phase VARCHAR(128)
   )`);
 
-  // Round player tracks (Iteration 4 + Iteration 6 addition reverse_player_id)
+  // Round player tracks (Iteration 4 + Iteration 6 addition reverse_player_id + Iteration 7 additions)
   await query(`CREATE TABLE IF NOT EXISTS round_player_tracks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     round_id UUID REFERENCES rounds(id) ON DELETE CASCADE,
@@ -56,12 +56,15 @@ async function migrate() {
     song_id UUID REFERENCES songs(id) ON DELETE SET NULL,
     original_path TEXT,
     reversed_path TEXT,
-    final_path TEXT,
+    reverse_recording_path TEXT,
+    final_audio_path TEXT,
     reverse_player_id UUID REFERENCES players(id) ON DELETE SET NULL,
     status VARCHAR(40)
   )`);
-  // Add column if table pre-existed without it
+  // Add columns if table pre-existed without them
   await query('ALTER TABLE round_player_tracks ADD COLUMN IF NOT EXISTS reverse_player_id UUID REFERENCES players(id) ON DELETE SET NULL');
+  await query('ALTER TABLE round_player_tracks ADD COLUMN IF NOT EXISTS reverse_recording_path TEXT');
+  await query('ALTER TABLE round_player_tracks ADD COLUMN IF NOT EXISTS final_audio_path TEXT');
 
   console.log('[migrate] completed');
 }

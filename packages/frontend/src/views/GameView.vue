@@ -38,6 +38,64 @@
 
       <div class="text-sm" v-if="progress.total>0">Uploaded: {{ progress.uploaded }} / {{ progress.total }}</div>
 
+      <!-- Reverse Recording Phase -->
+      <div v-if="phase==='reversed_recording' && myReverseAssignment" class="space-y-3 p-3 border rounded bg-blue-50">
+        <h4 class="font-medium text-sm">Reverse Recording Phase</h4>
+        <p class="text-xs text-gray-600">You are assigned to reverse the recording of: <span class="font-semibold">{{ nameById(myReverseAssignment) }}</span></p>
+
+        <!-- Play reversed original -->
+        <div class="space-y-1">
+          <p class="text-xs font-medium">Step 1: Listen to the reversed audio</p>
+          <div v-if="myReverseAssignment">
+            <button @click="playReversedOriginal" class="px-3 py-1 rounded bg-purple-600 text-white hover:bg-purple-700 text-sm mb-2">
+              Play Reversed Audio
+            </button>
+            <audio ref="reversedAudioPlayer" controls class="w-full"></audio>
+          </div>
+          <p class="text-xs text-gray-500">Play this as many times as you need</p>
+        </div>
+
+        <!-- Record reverse -->
+        <div class="space-y-2">
+          <p class="text-xs font-medium">Step 2: Try to reproduce what you hear</p>
+          <div class="flex items-center space-x-2 flex-wrap gap-2">
+            <button @click="onReverseRecord" :disabled="isReverseRecording || reverseUploaded"
+                    class="px-3 py-1 rounded text-white text-sm"
+                    :class="isReverseRecording||reverseUploaded? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'">
+              {{ isReverseRecording ? 'Recording...' : reverseUploaded ? 'Uploaded' : 'Start Recording' }}
+            </button>
+
+            <button v-if="isReverseRecording && !isReversePaused" @click="onReversePause"
+                    class="px-3 py-1 rounded bg-yellow-600 text-white hover:bg-yellow-700 text-sm">
+              Pause
+            </button>
+
+            <button v-if="isReverseRecording && isReversePaused" @click="onReverseResume"
+                    class="px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 text-sm">
+              Resume
+            </button>
+
+            <button v-if="isReverseRecording" @click="onReverseStop"
+                    class="px-3 py-1 rounded bg-red-600 text-white hover:bg-red-700 text-sm">
+              Stop
+            </button>
+
+            <button v-if="reverseRecordBlob && !reverseUploaded" @click="onReverseUpload" :disabled="reverseUploading"
+                    class="px-3 py-1 rounded text-white text-sm"
+                    :class="reverseUploading? 'bg-gray-400' : 'bg-indigo-600 hover:bg-indigo-700'">
+              {{ reverseUploading ? 'Uploading...' : 'Upload' }}
+            </button>
+          </div>
+          <p class="text-xs text-gray-500">You can pause and resume recording. Try to match the reversed audio!</p>
+          <audio v-if="reverseRecordBlob" :src="reverseRecordUrl" controls class="w-full"></audio>
+        </div>
+      </div>
+
+      <!-- Waiting for others during reverse recording -->
+      <div v-if="phase==='reversed_recording' && !myReverseAssignment" class="p-3 border rounded bg-gray-50">
+        <p class="text-sm text-gray-600">Waiting for reverse singers to complete their recordings...</p>
+      </div>
+
       <!-- Player list with status -->
       <h3 class="font-medium">Assignments</h3>
       <ul class="list-disc ml-5 space-y-1">
@@ -85,7 +143,7 @@ const loading = ref(true);
 const error = ref(null);
 const roundId = ref(null);
 const mySong = ref(null);
-const {isRecording, start, stop} = useAudioRecorder();
+const {isRecording, isPaused, start, stop, pause, resume} = useAudioRecorder();
 const recordBlob = ref(null);
 const recordUrl = ref('');
 const uploading = ref(false);
@@ -94,8 +152,83 @@ const statuses = ref({});
 const progress = reactive({uploaded: 0, total: 0});
 const reverseMap = ref(null);
 
+// Reverse recording state
+const reverseRecordBlob = ref(null);
+const reverseRecordUrl = ref('');
+const reverseUploading = ref(false);
+const reverseUploaded = ref(false);
+const reversedOriginalUrl = ref('');
+const reversedAudioPlayer = ref(null);
+const {isRecording: isReverseRecording, isPaused: isReversePaused, start: startReverse, stop: stopReverse, pause: pauseReverse, resume: resumeReverse} = useAudioRecorder();
+
 const {socket, connected, events} = useSocket(roomCode, playerId);
 const socketStatus = computed(() => connected.value ? 'ws ok' : 'ws...');
+
+// Check if current player is assigned to reverse any original
+const myReverseAssignment = computed(() => {
+  if (!reverseMap.value || !playerId) return null;
+  for (const [originalOwner, reversePlayer] of Object.entries(reverseMap.value)) {
+    if (reversePlayer === playerId) return originalOwner;
+  }
+  return null;
+});
+
+const registerEvents = () => {
+  // Extend existing socket listeners
+  socket.value?.on?.(events.ORIGINAL_UPLOADED, (payload) => {
+    console.log('events.ORIGINAL_UPLOADED', payload);
+    if (payload.roundId !== roundId.value) return;
+    statuses.value[payload.playerId] = events.ORIGINAL_UPLOADED;
+    progress.uploaded = payload.uploadedCount;
+    progress.total = payload.totalPlayers;
+  });
+// Update GAME_STARTED handler to store roundId and fetch song
+  socket.value?.on?.(events.GAME_STARTED, (payload) => {
+    console.log('events.GAME_STARTED', payload);
+    phase.value = payload.phase || 'originals_recording';
+    roundId.value = payload.roundId;
+    fetchRound();
+    fetchAssignedSong();
+  });
+
+// SONGS_ASSIGNED update to trigger song fetch for self
+  socket.value?.on?.(events.SONGS_ASSIGNED, (payload) => {
+    console.log('events.SONGS_ASSIGNED', payload);
+    if (payload.songId && !mySong.value) fetchAssignedSong();
+  });
+
+// Handle REVERSED_RECORDING_STARTED event
+  socket.value?.on?.(events.REVERSED_RECORDING_STARTED, (payload) => {
+    console.log('events.REVERSED_RECORDING_STARTED', payload);
+    if (payload.roundId !== roundId.value) {
+      return
+    }
+
+    reverseMap.value = payload.reverseMap || {};
+    phase.value = 'reversed_recording';
+    setTimeout(fetchReversedOriginal, 100);
+  });
+
+// Handle REVERSE_RECORDING_UPLOADED event
+  socket.value?.on?.(events.REVERSE_RECORDING_UPLOADED, (payload) => {
+    console.log('events.REVERSE_RECORDING_UPLOADED', payload);
+    if (payload.roundId !== roundId.value) return;
+    progress.uploaded = payload.uploadedCount;
+    progress.total = payload.totalPlayers;
+  });
+
+// Handle FINAL_AUDIO_READY event
+  socket.value?.on?.(events.FINAL_AUDIO_READY, (payload) => {
+    console.log('events.FINAL_AUDIO_READY', payload);
+    if (payload.roundId !== roundId.value) return;
+    phase.value = payload.phase || 'guessing';
+  });
+
+  socket.value?.on?.(events.ROOM_UPDATED, (state) => {
+    console.log('events.ROOM_UPDATED', state);
+    players.value = state.players || [];
+  });
+}
 
 function toLobby() {
   router.push(`/room/${roomCode}`);
@@ -153,7 +286,9 @@ async function onUpload() {
       body: form
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Upload failed');
+    if (!res.ok) {
+      throw new Error(data.error || 'Upload failed');
+    }
     uploaded.value = true;
   } catch (e) {
     console.warn(e.message);
@@ -182,6 +317,67 @@ async function onStop() {
   recordUrl.value = URL.createObjectURL(recordBlob.value);
 }
 
+async function onReverseRecord() {
+  await startReverse();
+}
+
+async function onReverseStop() {
+  reverseRecordBlob.value = await stopReverse();
+  reverseRecordUrl.value = URL.createObjectURL(reverseRecordBlob.value);
+}
+
+function onReversePause() {
+  pauseReverse();
+}
+
+function onReverseResume() {
+  resumeReverse();
+}
+
+async function onReverseUpload() {
+  if (!reverseRecordBlob.value || reverseUploaded.value || !roundId.value || !playerToken) return;
+  reverseUploading.value = true;
+  try {
+    const form = new FormData();
+    form.append('file', reverseRecordBlob.value, 'reverse.webm');
+    const res = await fetch(`/api/rounds/${roundId.value}/reverse-recording`, {
+      method: 'POST',
+      headers: {'x-player-token': playerToken},
+      body: form
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Upload failed');
+    reverseUploaded.value = true;
+  } catch (e) {
+    console.warn(e.message);
+  } finally {
+    reverseUploading.value = false;
+  }
+}
+
+async function fetchReversedOriginal() {
+  if (!roundId.value || !myReverseAssignment.value || !playerToken) {
+    return;
+  }
+  const originalOwner = myReverseAssignment.value;
+  reversedOriginalUrl.value = `/api/audio/reversed/${roundId.value}/${originalOwner}`;
+}
+
+async function playReversedOriginal() {
+  if (!reversedOriginalUrl.value || !playerToken || !reversedAudioPlayer.value) return;
+  try {
+    const res = await fetch(reversedOriginalUrl.value, {
+      headers: {'x-player-token': playerToken}
+    });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    reversedAudioPlayer.value.src = URL.createObjectURL(blob);
+    reversedAudioPlayer.value.load();
+  } catch (e) {
+    console.warn('Failed to load reversed audio:', e);
+  }
+}
+
 function integrateRound(round) {
   if (!round) return;
   if (round.roundId) roundId.value = round.roundId;
@@ -193,14 +389,6 @@ function integrateRound(round) {
 function nameById(id){
   const p = players.value.find(x=>x.id===id);return p? p.name.slice(0,20): id.slice(0,8);
 }
-
-// Extend existing socket listeners
-socket.value?.on?.(events.ORIGINAL_UPLOADED, (payload) => {
-  if (payload.roundId !== roundId.value) return;
-  statuses.value[payload.playerId] = 'original_uploaded';
-  progress.uploaded = payload.uploadedCount;
-  progress.total = payload.totalPlayers;
-});
 
 // Replace earlier fetchRound logic
 async function fetchRound() {
@@ -217,26 +405,6 @@ async function fetchRound() {
   }
 }
 
-// Update GAME_STARTED handler to store roundId and fetch song
-socket.value?.on?.(events.GAME_STARTED, (payload) => {
-  phase.value = payload.phase || 'originals_recording';
-  roundId.value = payload.roundId;
-  fetchRound();
-  fetchAssignedSong();
-});
-
-// SONGS_ASSIGNED update to trigger song fetch for self
-socket.value?.on?.(events.SONGS_ASSIGNED, (payload) => {
-  if (payload.songId && !mySong.value) fetchAssignedSong();
-});
-
-// Handle REVERSED_READY event
-socket.value?.on?.(events.REVERSED_READY, (payload) => {
-  if (payload.roundId !== roundId.value) return;
-  reverseMap.value = payload.reverseMap || {};
-  phase.value = 'reversing_first';
-});
-
 onMounted(() => {
   if (!playerId) {
     router.replace('/');
@@ -244,9 +412,7 @@ onMounted(() => {
   }
   fetchRoom();
   fetchRound();
-  socket.value?.on?.(events.ROOM_UPDATED, (state) => {
-    players.value = state.players || [];
-  });
+  registerEvents();
 });
 </script>
 <style scoped>
