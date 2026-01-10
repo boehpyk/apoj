@@ -67,11 +67,15 @@ async function onCreate(){
   try {
     const res = await fetch('/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ playerName: createName.value }) });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed');
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed');
+    }
     sessionStorage.setItem('playerId', data.playerId);
-    if (data.playerToken) sessionStorage.setItem('playerToken', data.playerToken);
+    if (data.playerToken) {
+      sessionStorage.setItem('playerToken', data.playerToken);
+    }
     sessionStorage.setItem('roomCode', data.roomCode);
-    router.push(`/room/${data.roomCode}`);
+    await router.push(`/room/${data.roomCode}`);
   } catch (e) {
     createError.value = e.message;
   } finally {
@@ -84,13 +88,22 @@ async function onJoin(){
   joining.value = true;
   try {
     const code = joinCode.value.toUpperCase();
-    const res = await fetch(`/api/rooms/${code}/join`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ playerName: joinName.value }) });
+    const res = await fetch(`/api/rooms/${code}/join`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ playerName: joinName.value })
+    });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed');
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed');
+    }
     sessionStorage.setItem('playerId', data.playerId);
-    if (data.playerToken) sessionStorage.setItem('playerToken', data.playerToken);
+    if (data.playerToken) {
+      sessionStorage.setItem('playerToken', data.playerToken);
+    }
+
     sessionStorage.setItem('roomCode', data.roomCode);
-    router.push(`/room/${data.roomCode}`);
+    await router.push(`/room/${data.roomCode}`);
   } catch (e) {
     joinError.value = e.message;
   } finally {

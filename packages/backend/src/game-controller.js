@@ -60,7 +60,7 @@ export async function startGame(roomCode) {
         // Update cached room status to in_progress (simple patch)
         const updatedRoom = await getRoomState(code);
         if (updatedRoom) {
-            updatedRoom.status = STATUSES.IN_PROGRESS;
+            updatedRoom.status = STATUSES.PLAYING;
             await redis.set(`room:${code}`, JSON.stringify(updatedRoom), 'EX', 86400);
         }
 

@@ -41,8 +41,11 @@ const players = ref([]);
 const hostId = ref(null);
 const starting = ref(false);
 const isHost = computed(() => hostId.value && playerId === hostId.value);
-const { socket, connected, events } = useSocket(roomCode, playerId);
+const { socket, connected, events, off } = useSocket(roomCode, playerId);
 const socketStatus = computed(() => connected.value ? 'ws ok' : 'ws...');
+
+// Store handler references for cleanup
+const handlers = {};
 
 async function fetchState(){
   try {
@@ -64,8 +67,14 @@ function copyCode(){
 }
 
 function startGame(){
-  if (players.value.length < 2) return; // allow starting with 2 per iteration note
-  if (!isHost.value) return;
+  if (players.value.length < 2){
+    return;
+  }
+
+  if (!isHost.value){
+    return;
+  }
+
   starting.value = true;
   fetch(`/api/rooms/${roomCode}/start`, {
     method: 'POST',
@@ -92,22 +101,35 @@ onMounted(() => {
     return;
   }
   fetchState();
-  // Socket events
-  socket.value?.on?.(events.ROOM_UPDATED, (state) => {
+
+  // Socket events - store references for cleanup
+  handlers.roomUpdated = (state) => {
     applyRoomState(state);
-  });
-  socket.value?.on?.(events.PLAYER_JOINED, () => {
+  };
+  handlers.playerJoined = () => {
     // Will get full state shortly via ROOM_UPDATED
-  });
-  socket.value?.on?.(events.PLAYER_LEFT, () => {
+  };
+  handlers.playerLeft = () => {
     // Could trigger state refresh later
-  });
-  socket.value?.on?.(events.GAME_STARTED, (payload) => {
+  };
+  handlers.gameStarted = (payload) => {
     router.push(`/game/${roomCode}`);
-  });
+  };
+
+  socket.value?.on?.(events.ROOM_UPDATED, handlers.roomUpdated);
+  socket.value?.on?.(events.PLAYER_JOINED, handlers.playerJoined);
+  socket.value?.on?.(events.PLAYER_LEFT, handlers.playerLeft);
+  socket.value?.on?.(events.GAME_STARTED, handlers.gameStarted);
 });
 
 onBeforeUnmount(() => {
+  // Clean up event listeners to prevent memory leaks
+  if (socket.value) {
+    socket.value.off(events.ROOM_UPDATED, handlers.roomUpdated);
+    socket.value.off(events.PLAYER_JOINED, handlers.playerJoined);
+    socket.value.off(events.PLAYER_LEFT, handlers.playerLeft);
+    socket.value.off(events.GAME_STARTED, handlers.gameStarted);
+  }
 });
 </script>
 <style scoped>

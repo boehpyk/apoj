@@ -99,7 +99,7 @@ fastify.post('/api/rooms/:code/start', async (req, reply) => {
             roundId: started.roundId,
             phase: started.phase
         });
-        broadcastAssignments(io, code.toUpperCase(), started.assignments, connections);
+        // broadcastAssignments(io, code.toUpperCase(), started.assignments, connections);
         reply.send(started);
     } catch (e) {
         return reply.code(500).send({
@@ -199,14 +199,12 @@ fastify.post('/api/rounds/:roundId/original-recording', async (req, reply) => {
  * Upload reverse recording endpoint
  */
 fastify.post('/api/rounds/:roundId/reverse-recording', async (req, reply) => {
-    const token = requireToken(req, reply);
-    if (!token) return;
-
-    const { roundId } = req.params;
-    const ctx = await resolvePlayerContext(token, roundId);
-    if (!ctx) {
-        return reply.code(403).send({
-            error: 'Forbidden: Invalid token or round'
+    let ctx = null;
+    try {
+        ctx = await validatePlayer(req);
+    } catch (e) {
+        return reply.code(401).send({
+            error: e.message
         });
     }
 
@@ -381,7 +379,7 @@ initInfra().then(() => {
                             playerIds: Object.keys(round.assignments),
                             songId: pid ? round.assignments[pid] : null
                         };
-                        socket.emit(EVENTS.SONGS_ASSIGNED, payload);
+                        // socket.emit(EVENTS.SONGS_ASSIGNED, payload);
                     }
                 } catch {
                 }
