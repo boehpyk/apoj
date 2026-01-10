@@ -27,6 +27,15 @@
         @uploaded="handleReverseUploaded"
       />
 
+      <!-- Guessing Phase -->
+      <GuessingPhase
+        v-if="phase === phases.GUESSING"
+        :round-id="roundId"
+        :uploaded-count="progress.uploaded"
+        :total-players="progress.total"
+        @submitted="handleGuessSubmitted"
+      />
+
       <!-- Player list with status -->
       <h3 class="font-medium">Assignments</h3>
       <ul class="list-disc ml-5 space-y-1">
@@ -62,6 +71,8 @@ import { useRoute, useRouter } from 'vue-router';
 import { useSocket } from '../composables/useSocket.js';
 import OriginalRecording from '../components/game/OriginalRecording.vue';
 import ReverseRecording from '../components/game/ReverseRecording.vue';
+import GuessingPhase from '../components/game/GuessingPhase.vue';
+import {ROUND_PHASES} from "shared/constants/index.js";
 
 const route = useRoute();
 const router = useRouter();
@@ -120,6 +131,10 @@ function handleOriginalUploaded() {
 
 function handleReverseUploaded() {
   console.log('Reverse recording uploaded');
+}
+
+function handleGuessSubmitted() {
+  console.log('Guess submitted');
 }
 
 async function fetchRoom() {
@@ -219,10 +234,12 @@ function registerEvents() {
     progress.total = payload.totalPlayers;
   };
 
-  handlers.finalAudioReady = (payload) => {
-    console.log('FINAL_AUDIO_READY', payload);
+  handlers.guessingStarted = (payload) => {
+    console.log('GUESSING_STARTED', payload);
     if (payload.roundId !== roundId.value) return;
-    phase.value = payload.phase || 'guessing';
+    phase.value = ROUND_PHASES.GUESSING;
+    progress.uploaded = payload.submittedCount || 0;
+    progress.total = payload.totalPlayers || 0;
   };
 
   handlers.roomUpdated = (state) => {
@@ -234,7 +251,7 @@ function registerEvents() {
   // socket.value?.on?.(events.SONGS_ASSIGNED, handlers.songsAssigned);
   socket.value?.on?.(events.REVERSED_RECORDING_STARTED, handlers.reversedRecordingStarted);
   socket.value?.on?.(events.REVERSE_RECORDING_UPLOADED, handlers.reverseRecordingUploaded);
-  socket.value?.on?.(events.FINAL_AUDIO_READY, handlers.finalAudioReady);
+  socket.value?.on?.(events.GUESSING_STARTED, handlers.guessingStarted);
   socket.value?.on?.(events.ROOM_UPDATED, handlers.roomUpdated);
 }
 
@@ -257,6 +274,7 @@ onBeforeUnmount(() => {
     socket.value.off(events.REVERSED_RECORDING_STARTED, handlers.reversedRecordingStarted);
     socket.value.off(events.REVERSE_RECORDING_UPLOADED, handlers.reverseRecordingUploaded);
     socket.value.off(events.FINAL_AUDIO_READY, handlers.finalAudioReady);
+    socket.value.off(events.GUESSING_STARTED, handlers.guessingStarted);
     socket.value.off(events.ROOM_UPDATED, handlers.roomUpdated);
   }
 });

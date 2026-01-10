@@ -10,7 +10,6 @@ export const EVENTS = {
     ORIGINAL_UPLOADED: 'original_uploaded',
     REVERSED_RECORDING_STARTED: 'reversed_recording_started',
     REVERSE_RECORDING_UPLOADED: 'reverse_recording_uploaded',
-    FINAL_AUDIO_READY: 'final_audio_ready',
     GUESSING_STARTED: 'guessing_started',
     GUESSING_ENDED: 'guessing_ended',
 };

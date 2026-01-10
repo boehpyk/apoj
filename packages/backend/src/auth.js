@@ -27,12 +27,19 @@ export async function verifyToken(token) {
 }
 
 /**
- * Get player token from request headers
+ * Get player token from request headers or query parameters
  * @param req
  * @returns {string|null}
  */
 export function requireToken(req) {
-    const token = req.headers['x-player-token'];
+    // Try header first
+    let token = req.headers['x-player-token'];
+
+    // Fall back to query parameter (for audio/video elements)
+    if (!token && req.query && req.query.token) {
+        token = req.query.token;
+    }
+
     if (!token || typeof token !== 'string') {
         return null;
     }

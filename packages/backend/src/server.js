@@ -15,7 +15,6 @@ import {
     validateStartGame,
     startGame,
     getRoundState,
-    broadcastAssignments,
     attemptAssignReverseRolesAndEmit,
     getAssignedOriginalSong,
     uploadOriginalRecord,
@@ -28,7 +27,7 @@ import {
     resolvePlayerContext
 } from './auth.js';
 import { validateInputFile } from "./validators.js";
-import {EVENTS, ROUND_PHASES, STATUSES} from '../../shared/constants/index.js';
+import {EVENTS, ROUND_PHASES} from '../../shared/constants/index.js';
 
 const fastify = Fastify();
 
@@ -235,7 +234,7 @@ fastify.post('/api/rounds/:roundId/reverse-recording', async (req, reply) => {
         if (allFinalReady) {
             // All reverse recordings done, transition to guessing phase
             await query('UPDATE rounds SET phase = $1 WHERE id = $2', [ROUND_PHASES.GUESSING, roundIdValue]);
-            io.to(roomCode).emit(EVENTS.FINAL_AUDIO_READY, {
+            io.to(roomCode).emit(EVENTS.GUESSING_STARTED, {
                 roundId: roundIdValue,
                 phase: ROUND_PHASES.GUESSING
             });
@@ -248,6 +247,191 @@ fastify.post('/api/rounds/:roundId/reverse-recording', async (req, reply) => {
         });
     } catch (e) {
         reply.code(400).send({error: e.message});
+    }
+});
+
+/**
+ * Get clues for guessing phase
+ * GET /api/rounds/:roundId/clues
+ */
+fastify.get('/api/rounds/:roundId/clues', async (req, reply) => {
+    let ctx = null;
+    try {
+        ctx = await validatePlayer(req);
+    } catch (e) {
+        return reply.code(401).send({ error: e.message });
+    }
+
+    const { roundId } = req.params;
+
+    try {
+        // Get all final audio tracks for this round
+        const tracksRes = await query(
+            `SELECT 
+                rpt.player_id as original_player_id,
+                rpt.reverse_player_id as imitation_player_id,
+                rpt.final_path,
+                rpt.song_id,
+                p.name as imitation_player_name
+            FROM round_player_tracks rpt
+            LEFT JOIN players p ON p.id = rpt.reverse_player_id
+            WHERE rpt.round_id = $1 
+            AND rpt.final_path IS NOT NULL
+            ORDER BY rpt.player_id`,
+            [roundId]
+        );
+
+        const clues = tracksRes.rows.map((row, index) => ({
+            clueIndex: index,
+            originalPlayerId: row.original_player_id,
+            imitationPlayerId: row.imitation_player_id,
+            imitationPlayerName: row.imitation_player_name || 'Unknown',
+            songId: row.song_id,
+            finalAudioUrl: `/api/audio/final/${roundId}/${row.original_player_id}`
+        }));
+
+        reply.send({ clues });
+    } catch (e) {
+        reply.code(500).send({ error: 'Failed to fetch clues' });
+    }
+});
+
+/**
+ * Submit guesses for the round
+ * POST /api/rounds/:roundId/guess
+ */
+fastify.post('/api/rounds/:roundId/guess', async (req, reply) => {
+    let ctx = null;
+    try {
+        ctx = await validatePlayer(req);
+    } catch (e) {
+        return reply.code(401).send({ error: e.message });
+    }
+
+    const { roundId } = req.params;
+    const { guesses } = req.body || {};
+
+    if (!Array.isArray(guesses) || guesses.length === 0) {
+        return reply.code(400).send({ error: 'Guesses array required' });
+    }
+
+    try {
+        // Validate round is in guessing phase
+        const roundRes = await query(
+            'SELECT phase, room_code FROM rounds WHERE id = $1',
+            [roundId]
+        );
+
+        if (!roundRes.rows.length) {
+            return reply.code(404).send({ error: 'Round not found' });
+        }
+
+        const round = roundRes.rows[0];
+        if (round.phase !== ROUND_PHASES.GUESSING) {
+            return reply.code(400).send({ error: 'Not in guessing phase' });
+        }
+
+        // Check if player already submitted
+        const existingRes = await query(
+            'SELECT id FROM player_guesses WHERE round_id = $1 AND player_id = $2',
+            [roundId, ctx.playerId]
+        );
+
+        if (existingRes.rows.length > 0) {
+            return reply.code(400).send({ error: 'Already submitted' });
+        }
+
+        // Store guesses (for now, just store as JSONB)
+        await query(
+            `INSERT INTO player_guesses (round_id, player_id, guesses, submitted_at)
+             VALUES ($1, $2, $3, NOW())`,
+            [roundId, ctx.playerId, JSON.stringify(guesses)]
+        );
+
+        // Count how many players have submitted
+        const countRes = await query(
+            'SELECT COUNT(*) as count FROM player_guesses WHERE round_id = $1',
+            [roundId]
+        );
+
+        const submittedCount = parseInt(countRes.rows[0].count);
+
+        // Get total players in round
+        const totalRes = await query(
+            'SELECT COUNT(*) as count FROM round_player_tracks WHERE round_id = $1',
+            [roundId]
+        );
+
+        const totalPlayers = parseInt(totalRes.rows[0].count);
+
+        // Emit event
+        io.to(round.room_code).emit(EVENTS.GUESSING_STARTED, {
+            roundId,
+            playerId: ctx.playerId,
+            submittedCount,
+            totalPlayers
+        });
+
+        // If all players submitted, move to scoring phase
+        if (submittedCount >= totalPlayers) {
+            await query(
+                'UPDATE rounds SET phase = $1 WHERE id = $2',
+                [ROUND_PHASES.ROUND_ENDED, roundId]
+            );
+
+            io.to(round.room_code).emit(EVENTS.GUESSING_ENDED, {
+                roundId,
+                phase: ROUND_PHASES.ROUND_ENDED
+            });
+        }
+
+        reply.send({ ok: true, submittedCount, totalPlayers });
+    } catch (e) {
+        console.error('[guess] error:', e);
+        reply.code(500).send({ error: 'Failed to submit guess' });
+    }
+});
+
+/**
+ * Stream final audio (reversed twice) for guessing
+ * GET /api/audio/final/:roundId/:playerId
+ */
+fastify.get('/api/audio/final/:roundId/:playerId', {config: {rateLimit: {max: 10, timeWindow: '10s'}}}, async (req, reply) => {
+    try {
+        const token = requireToken(req, reply);
+        if (!token) {
+            return;
+        }
+
+        const { roundId, playerId } = req.params;
+        if (!roundId || !playerId) {
+            return reply.code(400).send({ error: 'Missing params' });
+        }
+
+        const ctx = await resolvePlayerContext(token, roundId);
+        if (!ctx) {
+            return reply.code(403).send({ error: 'Forbidden' });
+        }
+
+        // Get final audio path
+        const trackRes = await query(
+            'SELECT final_path FROM round_player_tracks WHERE round_id = $1 AND player_id = $2',
+            [roundId, playerId]
+        );
+
+        if (!trackRes.rows.length || !trackRes.rows[0].final_path) {
+            return reply.code(404).send({ error: 'Final audio not found' });
+        }
+
+        const objectName = trackRes.rows[0].final_path;
+        const stream = await getObjectStream('audio-recordings', objectName);
+
+        reply.header('Content-Type', 'audio/webm');
+        reply.header('Cache-Control', 'no-cache');
+        return reply.send(stream);
+    } catch (e) {
+        console.error('[final audio] error:', e);
+        reply.code(404).send({ error: 'Not found' });
     }
 });
 

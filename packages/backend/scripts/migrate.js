@@ -57,14 +57,24 @@ async function migrate() {
     original_path TEXT,
     reversed_path TEXT,
     reverse_recording_path TEXT,
-    final_audio_path TEXT,
+    final_path TEXT,
     reverse_player_id UUID REFERENCES players(id) ON DELETE SET NULL,
     status VARCHAR(40)
   )`);
   // Add columns if table pre-existed without them
   await query('ALTER TABLE round_player_tracks ADD COLUMN IF NOT EXISTS reverse_player_id UUID REFERENCES players(id) ON DELETE SET NULL');
   await query('ALTER TABLE round_player_tracks ADD COLUMN IF NOT EXISTS reverse_recording_path TEXT');
-  await query('ALTER TABLE round_player_tracks ADD COLUMN IF NOT EXISTS final_audio_path TEXT');
+  await query('ALTER TABLE round_player_tracks ADD COLUMN IF NOT EXISTS final_path TEXT');
+
+  // Player guesses (Iteration 8)
+  await query(`CREATE TABLE IF NOT EXISTS player_guesses (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    round_id UUID REFERENCES rounds(id) ON DELETE CASCADE,
+    player_id UUID REFERENCES players(id) ON DELETE CASCADE,
+    guesses JSONB NOT NULL,
+    submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(round_id, player_id)
+  )`);
 
   console.log('[migrate] completed');
 }
