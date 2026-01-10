@@ -109,15 +109,8 @@ export async function getAssignedOriginalSong(ctx) {
 export async function uploadOriginalRecord(ctx, file) {
     const playerId = ctx.playerId;
     const roundId = ctx.roundId;
-    const chunks = [];
-    let totalBytes = 0;
 
-    for await (const chunk of file.file) {
-        chunks.push(chunk);
-        totalBytes += chunk.length;
-        if (totalBytes > 10 * 1024 * 1024) throw new Error('File exceeds 10MB');
-    }
-    const buffer = Buffer.concat(chunks);
+    const buffer = await uploadFileToBuffer(file);
 
     const trackCheck = await query('SELECT status FROM round_player_tracks WHERE round_id = $1 AND player_id = $2', [roundId, playerId]);
     if (!trackCheck.rows.length) {
@@ -299,15 +292,8 @@ export async function attemptAssignReverseRolesAndEmit(io, roomCode) {
 export async function uploadReverseRecording(ctx, file) {
     const playerId = ctx.playerId;
     const roundId = ctx.roundId;
-    const chunks = [];
-    let totalBytes = 0;
 
-    for await (const chunk of file.file) {
-        chunks.push(chunk);
-        totalBytes += chunk.length;
-        if (totalBytes > 10 * 1024 * 1024) throw new Error('File exceeds 10MB');
-    }
-    const buffer = Buffer.concat(chunks);
+    const buffer = await uploadFileToBuffer(file);
 
     // Find which original this player is reversing
     const trackCheck = await query(
@@ -361,7 +347,7 @@ export async function uploadReverseRecording(ctx, file) {
 
     // Update track status
     await query(
-        'UPDATE round_player_tracks SET reverse_recording_path = $1, final_audio_path = $2, status = $3 WHERE round_id = $4 AND player_id = $5',
+        'UPDATE round_player_tracks SET reversed_path = $1, final_path = $2, status = $3 WHERE round_id = $4 AND player_id = $5',
         [reverseRecordingObjectName, finalAudioObjectName, ROUND_PHASES.FINAL_AUDIO_READY, roundId, originalOwnerId]
     );
 
@@ -409,4 +395,21 @@ const assignSongs = async (room, roundId) => {
     }
 
     return assignments;
+}
+
+/**
+ * Upload file to buffer with size limit
+ * @param file
+ * @returns {Promise<Buffer<ArrayBuffer>>}
+ */
+const uploadFileToBuffer = async (file) => {
+    const chunks = [];
+    let totalBytes = 0;
+
+    for await (const chunk of file.file) {
+        chunks.push(chunk);
+        totalBytes += chunk.length;
+        if (totalBytes > 10 * 1024 * 1024) throw new Error('File exceeds 10MB');
+    }
+    return Buffer.concat(chunks);
 }

@@ -190,7 +190,6 @@ async function fetchRound() {
 
 function registerEvents() {
   handlers.originalUploaded = (payload) => {
-    console.log('ORIGINAL_UPLOADED', payload);
     if (payload.roundId !== roundId.value) return;
     statuses.value[payload.playerId] = 'original_uploaded';
     progress.uploaded = payload.uploadedCount;
@@ -198,7 +197,6 @@ function registerEvents() {
   };
 
   handlers.gameStarted = (payload) => {
-    console.log('GAME_STARTED', payload);
     phase.value = payload.phase || 'originals_recording';
     roundId.value = payload.roundId;
     fetchRound();
@@ -210,14 +208,12 @@ function registerEvents() {
   // };
 
   handlers.reversedRecordingStarted = (payload) => {
-    console.log('REVERSED_RECORDING_STARTED', payload);
     if (payload.roundId !== roundId.value) return;
     reverseMap.value = payload.reverseMap || {};
     phase.value = 'reversed_recording';
   };
 
   handlers.reverseRecordingUploaded = (payload) => {
-    console.log('REVERSE_RECORDING_UPLOADED', payload);
     if (payload.roundId !== roundId.value) return;
     progress.uploaded = payload.uploadedCount;
     progress.total = payload.totalPlayers;
@@ -230,7 +226,6 @@ function registerEvents() {
   };
 
   handlers.roomUpdated = (state) => {
-    console.log('ROOM_UPDATED', state);
     players.value = state.players || [];
   };
 
