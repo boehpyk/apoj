@@ -76,6 +76,22 @@ async function migrate() {
     UNIQUE(round_id, player_id)
   )`);
 
+  // Round scores (Iteration 9)
+  await query(`CREATE TABLE IF NOT EXISTS round_scores (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    round_id UUID REFERENCES rounds(id) ON DELETE CASCADE,
+    player_id UUID REFERENCES players(id) ON DELETE CASCADE,
+    clue_index INTEGER NOT NULL,
+    ai_score DECIMAL(4,2) DEFAULT 0,
+    base_points INTEGER DEFAULT 0,
+    speed_bonus INTEGER DEFAULT 0,
+    artist_bonus INTEGER DEFAULT 0,
+    total_points INTEGER DEFAULT 0,
+    reasoning TEXT,
+    used_fallback BOOLEAN DEFAULT false,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )`);
+
   console.log('[migrate] completed');
 }
 

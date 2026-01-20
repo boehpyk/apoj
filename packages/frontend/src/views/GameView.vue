@@ -36,6 +36,15 @@
         @submitted="handleGuessSubmitted"
       />
 
+      <!-- Round Results Phase -->
+      <RoundResults
+        v-if="phase === phases.ROUND_ENDED"
+        :round-id="roundId"
+        :room-code="roomCode"
+        :is-host="false"
+        @next-round="handleNextRound"
+      />
+
       <!-- Player list with status -->
       <h3 class="font-medium">Assignments</h3>
       <ul class="list-disc ml-5 space-y-1">
@@ -72,6 +81,7 @@ import { useSocket } from '../composables/useSocket.js';
 import OriginalRecording from '../components/game/OriginalRecording.vue';
 import ReverseRecording from '../components/game/ReverseRecording.vue';
 import GuessingPhase from '../components/game/GuessingPhase.vue';
+import RoundResults from '../components/game/RoundResults.vue';
 import {ROUND_PHASES} from "shared/constants/index.js";
 
 const route = useRoute();
@@ -135,6 +145,31 @@ function handleReverseUploaded() {
 
 function handleGuessSubmitted() {
   console.log('Guess submitted');
+  // Trigger scoring after all guesses submitted
+  triggerScoring();
+}
+
+async function triggerScoring() {
+  try {
+    const playerToken = sessionStorage.getItem('playerToken');
+    const res = await fetch(`/api/rounds/${roundId.value}/score`, {
+      method: 'POST',
+      headers: {
+        'x-player-token': playerToken
+      }
+    });
+
+    if (!res.ok) {
+      console.error('Failed to trigger scoring');
+    }
+  } catch (e) {
+    console.error('Error triggering scoring:', e);
+  }
+}
+
+function handleNextRound() {
+  // TODO: Implement next round logic
+  console.log('Start next round');
 }
 
 async function fetchRoom() {
@@ -249,6 +284,12 @@ function registerEvents() {
     progress.total = payload.totalPlayers || 0;
   };
 
+  handlers.scoresFetched = (payload) => {
+    console.log('SCORES_FETCHING_ENDED', payload);
+    if (payload.roundId !== roundId.value) return;
+    phase.value = ROUND_PHASES.ROUND_ENDED;
+  };
+
   handlers.roomUpdated = (state) => {
     players.value = state.players || [];
   };
@@ -260,6 +301,7 @@ function registerEvents() {
   socket.value?.on?.(events.REVERSE_RECORDING_UPLOADED, handlers.reverseRecordingUploaded);
   socket.value?.on?.(events.GUESSING_STARTED, handlers.guessingStarted);
   socket.value?.on?.(events.GUESS_SUBMITTED, handlers.guessSubmitted);
+  socket.value?.on?.(events.SCORES_FETCHING_ENDED, handlers.scoresFetched);
   socket.value?.on?.(events.ROOM_UPDATED, handlers.roomUpdated);
 }
 
@@ -283,6 +325,7 @@ onBeforeUnmount(() => {
     socket.value.off(events.REVERSE_RECORDING_UPLOADED, handlers.reverseRecordingUploaded);
     socket.value.off(events.GUESSING_STARTED, handlers.guessingStarted);
     socket.value.off(events.GUESS_SUBMITTED, handlers.guessSubmitted);
+    socket.value.off(events.SCORES_FETCHING_ENDED, handlers.scoresFetched);
     socket.value.off(events.ROOM_UPDATED, handlers.roomUpdated);
   }
 });
