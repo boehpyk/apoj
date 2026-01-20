@@ -5,6 +5,10 @@ bower_components/
 doc/
 .pnpm-store/
 
+# Data directories
+minio_data/
+.agent/
+
 # Build outputs
 dist/
 build/
