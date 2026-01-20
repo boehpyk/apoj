@@ -370,7 +370,7 @@ fastify.post('/api/rounds/:roundId/guess', async (req, reply) => {
         const totalPlayers = parseInt(totalRes.rows[0].count);
 
         // Emit event to update progress
-        io.to(round.room_code).emit(EVENTS.GUESS_SUBMITTED, {
+        io.to(round.room_code).emit(EVENTS.GUESSING_ENDED, {
             roundId,
             playerId: ctx.playerId,
             submittedCount,
@@ -381,7 +381,7 @@ fastify.post('/api/rounds/:roundId/guess', async (req, reply) => {
         if (submittedCount >= totalPlayers) {
             await query(
                 'UPDATE rounds SET phase = $1 WHERE id = $2',
-                [ROUND_PHASES.GUESSING_ENDED, roundId]
+                [ROUND_PHASES.SCORES_FETCHING, roundId]
             );
 
             io.to(round.room_code).emit(EVENTS.GUESSING_ENDED, {
