@@ -242,6 +242,13 @@ function registerEvents() {
     progress.total = payload.totalPlayers || 0;
   };
 
+  handlers.guessSubmitted = (payload) => {
+    console.log('GUESS_SUBMITTED', payload);
+    if (payload.roundId !== roundId.value) return;
+    progress.uploaded = payload.submittedCount || 0;
+    progress.total = payload.totalPlayers || 0;
+  };
+
   handlers.roomUpdated = (state) => {
     players.value = state.players || [];
   };
@@ -252,6 +259,7 @@ function registerEvents() {
   socket.value?.on?.(events.REVERSED_RECORDING_STARTED, handlers.reversedRecordingStarted);
   socket.value?.on?.(events.REVERSE_RECORDING_UPLOADED, handlers.reverseRecordingUploaded);
   socket.value?.on?.(events.GUESSING_STARTED, handlers.guessingStarted);
+  socket.value?.on?.(events.GUESS_SUBMITTED, handlers.guessSubmitted);
   socket.value?.on?.(events.ROOM_UPDATED, handlers.roomUpdated);
 }
 
@@ -273,8 +281,8 @@ onBeforeUnmount(() => {
     // socket.value.off(events.SONGS_ASSIGNED, handlers.songsAssigned);
     socket.value.off(events.REVERSED_RECORDING_STARTED, handlers.reversedRecordingStarted);
     socket.value.off(events.REVERSE_RECORDING_UPLOADED, handlers.reverseRecordingUploaded);
-    socket.value.off(events.FINAL_AUDIO_READY, handlers.finalAudioReady);
     socket.value.off(events.GUESSING_STARTED, handlers.guessingStarted);
+    socket.value.off(events.GUESS_SUBMITTED, handlers.guessSubmitted);
     socket.value.off(events.ROOM_UPDATED, handlers.roomUpdated);
   }
 });

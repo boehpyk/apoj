@@ -11,7 +11,10 @@ export const EVENTS = {
     REVERSED_RECORDING_STARTED: 'reversed_recording_started',
     REVERSE_RECORDING_UPLOADED: 'reverse_recording_uploaded',
     GUESSING_STARTED: 'guessing_started',
+    GUESS_SUBMITTED: 'guess_submitted',
     GUESSING_ENDED: 'guessing_ended',
+    SCORES_FETCHING_STARTED: 'scores_fetching_started',
+    SCORES_FETCHING_ENDED: 'scores_fetching_ended',
 };
 
 /**
@@ -31,6 +34,7 @@ export const ROUND_PHASES = {
     PROCESSING_FINAL_AUDIO: 'processing_final_audio',
     FINAL_AUDIO_READY: 'final_audio_ready',
     GUESSING: 'guessing',
+    SCORES_FETCHING: 'scores_fetching',
     ROUND_ENDED: 'round_ended'
 }
 

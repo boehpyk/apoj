@@ -236,7 +236,9 @@ fastify.post('/api/rounds/:roundId/reverse-recording', async (req, reply) => {
             await query('UPDATE rounds SET phase = $1 WHERE id = $2', [ROUND_PHASES.GUESSING, roundIdValue]);
             io.to(roomCode).emit(EVENTS.GUESSING_STARTED, {
                 roundId: roundIdValue,
-                phase: ROUND_PHASES.GUESSING
+                phase: ROUND_PHASES.GUESSING,
+                submittedCount: 0,
+                totalPlayers: statusesRes.rows.length
             });
         }
 
@@ -316,9 +318,12 @@ fastify.post('/api/rounds/:roundId/guess', async (req, reply) => {
     }
 
     try {
-        // Validate round is in guessing phase
+        // Validate round is in guessing phase and get room_code
         const roundRes = await query(
-            'SELECT phase, room_code FROM rounds WHERE id = $1',
+            `SELECT r.phase, gs.room_code 
+             FROM rounds r 
+             JOIN game_sessions gs ON r.session_id = gs.id 
+             WHERE r.id = $1`,
             [roundId]
         );
 
@@ -364,8 +369,8 @@ fastify.post('/api/rounds/:roundId/guess', async (req, reply) => {
 
         const totalPlayers = parseInt(totalRes.rows[0].count);
 
-        // Emit event
-        io.to(round.room_code).emit(EVENTS.GUESSING_STARTED, {
+        // Emit event to update progress
+        io.to(round.room_code).emit(EVENTS.GUESS_SUBMITTED, {
             roundId,
             playerId: ctx.playerId,
             submittedCount,
@@ -376,12 +381,12 @@ fastify.post('/api/rounds/:roundId/guess', async (req, reply) => {
         if (submittedCount >= totalPlayers) {
             await query(
                 'UPDATE rounds SET phase = $1 WHERE id = $2',
-                [ROUND_PHASES.ROUND_ENDED, roundId]
+                [ROUND_PHASES.GUESSING_ENDED, roundId]
             );
 
             io.to(round.room_code).emit(EVENTS.GUESSING_ENDED, {
                 roundId,
-                phase: ROUND_PHASES.ROUND_ENDED
+                phase: ROUND_PHASES.SCORES_FETCHING
             });
         }
 

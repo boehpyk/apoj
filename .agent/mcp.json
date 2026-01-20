@@ -1,0 +1,8 @@
+{
+    "mcpServers": {
+        "dbhub": {
+            "url": "http://localhost:8080/mcp",
+            "transport": "sse"
+        }
+    }
+}
