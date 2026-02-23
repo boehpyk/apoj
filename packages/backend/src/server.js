@@ -371,14 +371,6 @@ fastify.post('/api/rounds/:roundId/guess', async (req, reply) => {
 
         const totalPlayers = parseInt(totalRes.rows[0].count);
 
-        // Emit event to update progress
-        io.to(round.room_code).emit(EVENTS.GUESSING_ENDED, {
-            roundId,
-            playerId: ctx.playerId,
-            submittedCount,
-            totalPlayers
-        });
-
         // If all players submitted, move to scoring phase
         if (submittedCount >= totalPlayers) {
             await query(
