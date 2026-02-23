@@ -76,6 +76,9 @@ async function migrate() {
     UNIQUE(round_id, player_id)
   )`);
 
+  // Add guessing_started_at to rounds if it doesn't exist
+  await query('ALTER TABLE rounds ADD COLUMN IF NOT EXISTS guessing_started_at TIMESTAMP');
+
   // Round scores (Iteration 9)
   await query(`CREATE TABLE IF NOT EXISTS round_scores (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

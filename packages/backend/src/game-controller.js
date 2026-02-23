@@ -17,9 +17,9 @@ function roundKey(roomCode) {
 }
 
 /**
- * Validate input date for starting the game
+ * Validate input for starting the game
  * @param roomState
- * @param playerId
+ * @param playerId - the authenticated player's id (from token)
  */
 export function validateStartGame(roomState, playerId) {
     if (!roomState) throw new Error('Room not found');

@@ -34,6 +34,7 @@ const route = useRoute();
 const router = useRouter();
 const roomCode = route.params.code;
 const playerId = sessionStorage.getItem('playerId');
+const playerToken = sessionStorage.getItem('playerToken');
 
 const loading = ref(true);
 const error = ref(null);
@@ -78,8 +79,10 @@ function startGame(){
   starting.value = true;
   fetch(`/api/rooms/${roomCode}/start`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ playerId })
+    headers: {
+      'Content-Type': 'application/json',
+      'x-player-token': playerToken
+    }
   }).then(r => r.json()).then(data => {
     if (data.error) {
       console.warn('[room] start error', data.error);

@@ -26,9 +26,11 @@ function initializeSocket() {
         console.log('[useSocket] Connected to server');
         // Re-join room if we were in one
         if (currentRoom.value && currentPlayer.value) {
+            const token = sessionStorage.getItem('playerToken');
             socketInstance.emit(EVENTS.JOIN_ROOM, {
                 roomCode: currentRoom.value,
-                playerId: currentPlayer.value
+                playerId: currentPlayer.value,
+                token
             });
         }
     });
@@ -48,7 +50,8 @@ export function useSocket(roomCode, playerId) {
         if (!socket.value || !connected.value) return;
         currentRoom.value = roomCode;
         currentPlayer.value = playerId;
-        socket.value.emit(EVENTS.JOIN_ROOM, { roomCode, playerId });
+        const token = sessionStorage.getItem('playerToken');
+        socket.value.emit(EVENTS.JOIN_ROOM, { roomCode, playerId, token });
     }
 
     function on(event, handler) {

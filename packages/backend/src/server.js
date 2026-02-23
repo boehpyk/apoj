@@ -24,6 +24,7 @@ import {
 import {
     validatePlayer,
     requireToken,
+    verifyToken,
     invalidateAllRoomTokens,
     resolvePlayerContext
 } from './auth.js';
@@ -77,17 +78,27 @@ fastify.get('/api/rooms/:code', async (req, reply) => {
  */
 fastify.post('/api/rooms/:code/start', async (req, reply) => {
     const { code } = req.params;
-    const { playerId } = req.body || {};
+
+    const token = requireToken(req);
+    if (!token) {
+        return reply.code(401).send({ error: 'Missing token' });
+    }
+    const meta = await verifyToken(token);
+    if (!meta) {
+        return reply.code(401).send({ error: 'Invalid token' });
+    }
+    const playerId = meta.playerId;
+
     const roomState = await getRoomState(code.toUpperCase());
 
     try {
         validateStartGame(roomState, playerId);
     } catch (e) {
-        reply.code(400).send({error: e.message});
+        return reply.code(400).send({error: e.message});
     }
 
-    if (! io) {
-        reply.code(500).send({
+    if (!io) {
+        return reply.code(500).send({
             error: 'WebSocket not initialized'
         });
     }
@@ -235,7 +246,7 @@ fastify.post('/api/rounds/:roundId/reverse-recording', async (req, reply) => {
 
         if (allFinalReady) {
             // All reverse recordings done, transition to guessing phase
-            await query('UPDATE rounds SET phase = $1 WHERE id = $2', [ROUND_PHASES.GUESSING, roundIdValue]);
+            await query('UPDATE rounds SET phase = $1, guessing_started_at = NOW() WHERE id = $2', [ROUND_PHASES.GUESSING, roundIdValue]);
             io.to(roomCode).emit(EVENTS.GUESSING_STARTED, {
                 roundId: roundIdValue,
                 phase: ROUND_PHASES.GUESSING,
@@ -451,9 +462,9 @@ fastify.post('/api/rounds/:roundId/score', async (req, reply) => {
     try {
         // Get round and room info
         const roundRes = await query(
-            `SELECT r.id, r.phase, gs.room_code 
-             FROM rounds r 
-             JOIN game_sessions gs ON r.session_id = gs.id 
+            `SELECT r.id, r.phase, r.guessing_started_at, gs.room_code
+             FROM rounds r
+             JOIN game_sessions gs ON r.session_id = gs.id
              WHERE r.id = $1`,
             [roundId]
         );
@@ -463,6 +474,7 @@ fastify.post('/api/rounds/:roundId/score', async (req, reply) => {
         }
 
         const round = roundRes.rows[0];
+        const guessingStartedAt = round.guessing_started_at ? new Date(round.guessing_started_at) : null;
 
         // Check if already scored
         const existingScores = await query(
@@ -530,8 +542,12 @@ fastify.post('/api/rounds/:roundId/score', async (req, reply) => {
             const original = originalSongs.find(s => s.clueIndex === assessment.clueIndex);
             if (!original) continue;
 
-            // Calculate submission time (simplified - using current time)
-            const submissionTimeSeconds = 45; // TODO: Track actual submission time per clue
+            // Calculate elapsed seconds from guessing phase start to when the player submitted
+            let submissionTimeSeconds = 45; // fallback if timestamps unavailable
+            if (guessingStartedAt && playerGuess.submittedAt) {
+                const submittedAt = new Date(playerGuess.submittedAt);
+                submissionTimeSeconds = Math.max(0, (submittedAt - guessingStartedAt) / 1000);
+            }
 
             // Check artist match
             const artistMatch = checkArtistMatch(guess.artist, original.artist);
@@ -695,9 +711,19 @@ fastify.get('/api/rounds/:roundId/results', async (req, reply) => {
 
 // End game endpoint: host can end game; invalidate all tokens
 fastify.post('/api/rooms/:code/end', async (req, reply) => {
+    const {code} = req.params;
+
+    const token = requireToken(req);
+    if (!token) {
+        return reply.code(401).send({ error: 'Missing token' });
+    }
+    const meta = await verifyToken(token);
+    if (!meta) {
+        return reply.code(401).send({ error: 'Invalid token' });
+    }
+    const playerId = meta.playerId;
+
     try {
-        const {code} = req.params;
-        const {playerId} = req.body || {};
         const state = await getRoomState(code.toUpperCase());
         if (!state) throw new Error('Room not found');
         if (state.hostId !== playerId) throw new Error('Not host');
@@ -797,8 +823,16 @@ initInfra().then(() => {
         io.on('connection', (socket) => {
             socket.on(EVENTS.JOIN_ROOM, async (data) => {
                 try {
-                    const {roomCode, playerId} = data || {};
-                    if (!roomCode || !playerId) return;
+                    const {roomCode, playerId, token} = data || {};
+                    if (!roomCode || !playerId || !token) return;
+
+                    // Validate token matches the claimed playerId
+                    const tokenMeta = await verifyToken(token);
+                    if (!tokenMeta || tokenMeta.playerId !== playerId || tokenMeta.roomCode !== roomCode.toUpperCase()) {
+                        socket.emit('error', {message: 'Invalid token'});
+                        return;
+                    }
+
                     const state = await getRoomState(roomCode.toUpperCase());
                     if (!state) return;
                     if (!state.players.some(p => p.id === playerId)) return;
