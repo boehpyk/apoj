@@ -2,7 +2,6 @@
 node_modules/
 vendor/
 bower_components/
-doc/
 .pnpm-store/
 
 # Data directories
