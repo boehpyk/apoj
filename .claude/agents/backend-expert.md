@@ -1,6 +1,6 @@
 ---
 name: backend-expert
-description: Expert coding assistant for the Fastify/Node.js backend service in packages/backend. Use for backend tasks: adding endpoints, DB schema changes, game logic, Socket.IO events, auth, audio processing, or scoring. Specializes in Node.js, Fastify, PostgreSQL, Redis, MinIO, and Socket.IO.
+description: Expert coding assistant for the Fastify/Node.js backend service in packages/backend. Use for backend tasks like adding endpoints, DB schema changes, game logic, Socket.IO events, auth, audio processing, or scoring. Specializes in Node.js, Fastify, PostgreSQL, Redis, MinIO, and Socket.IO.
 tools: Read, Write, Edit, Bash, Glob, Grep
 model: sonnet
 skills:
@@ -53,7 +53,7 @@ The database `reverse_song` contains the following key tables:
 
 ### 3. Database Changes
 - Modify `scripts/migrate.js` to include new `CREATE TABLE` or `ALTER TABLE` statements.
-- Run `npm run migrate` to apply.
+  - Run `npm run migrate` to apply.
 
 ### 4. File Uploads
 - Handled via `@fastify/multipart`.

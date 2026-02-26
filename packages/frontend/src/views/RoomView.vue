@@ -80,7 +80,6 @@ function startGame(){
   fetch(`/api/rooms/${roomCode}/start`, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
       'x-player-token': playerToken
     }
   }).then(r => r.json()).then(data => {

@@ -36,6 +36,16 @@
         @submitted="handleGuessSubmitted"
       />
 
+      <!-- Scores Fetching Phase: show live scores immediately from socket payload -->
+      <div v-if="phase === phases.SCORES_FETCHING">
+        <ScoreReveal
+          v-if="liveScores && liveScores.length"
+          :scores="liveScores"
+          :my-player-id="playerId"
+        />
+        <div v-else class="text-sm text-gray-500">Calculating scores...</div>
+      </div>
+
       <!-- Round Results Phase -->
       <RoundResults
         v-if="phase === phases.ROUND_ENDED"
@@ -82,6 +92,7 @@ import OriginalRecording from '../components/game/OriginalRecording.vue';
 import ReverseRecording from '../components/game/ReverseRecording.vue';
 import GuessingPhase from '../components/game/GuessingPhase.vue';
 import RoundResults from '../components/game/RoundResults.vue';
+import ScoreReveal from '../components/game/ScoreReveal.vue';
 import {ROUND_PHASES} from "shared/constants/index.js";
 
 const route = useRoute();
@@ -100,6 +111,7 @@ const mySong = ref(null);
 const statuses = ref({});
 const progress = reactive({ uploaded: 0, total: 0 });
 const reverseMap = ref(null);
+const liveScores = ref(null);
 
 const { socket, connected, events, phases } = useSocket(roomCode, playerId);
 const socketStatus = computed(() => connected.value ? 'ws ok' : 'ws...');
@@ -145,8 +157,6 @@ function handleReverseUploaded() {
 
 function handleGuessSubmitted() {
   console.log('Guess submitted');
-  // Trigger scoring after all guesses submitted
-  triggerScoring();
 }
 
 async function triggerScoring() {
@@ -284,10 +294,20 @@ function registerEvents() {
     progress.total = payload.totalPlayers || 0;
   };
 
+  handlers.guessingEnded = (payload) => {
+    console.log('GUESSING_ENDED', payload);
+    if (payload.roundId !== roundId.value) return;
+    triggerScoring();
+  };
+
   handlers.scoresFetched = (payload) => {
     console.log('SCORES_FETCHING_ENDED', payload);
     if (payload.roundId !== roundId.value) return;
-    phase.value = ROUND_PHASES.ROUND_ENDED;
+    liveScores.value = payload.scores || [];
+    phase.value = ROUND_PHASES.SCORES_FETCHING;
+    setTimeout(() => {
+      phase.value = ROUND_PHASES.ROUND_ENDED;
+    }, 8000);
   };
 
   handlers.roomUpdated = (state) => {
@@ -301,6 +321,7 @@ function registerEvents() {
   socket.value?.on?.(events.REVERSE_RECORDING_UPLOADED, handlers.reverseRecordingUploaded);
   socket.value?.on?.(events.GUESSING_STARTED, handlers.guessingStarted);
   socket.value?.on?.(events.GUESS_SUBMITTED, handlers.guessSubmitted);
+  socket.value?.on?.(events.GUESSING_ENDED, handlers.guessingEnded);
   socket.value?.on?.(events.SCORES_FETCHING_ENDED, handlers.scoresFetched);
   socket.value?.on?.(events.ROOM_UPDATED, handlers.roomUpdated);
 }
@@ -325,6 +346,7 @@ onBeforeUnmount(() => {
     socket.value.off(events.REVERSE_RECORDING_UPLOADED, handlers.reverseRecordingUploaded);
     socket.value.off(events.GUESSING_STARTED, handlers.guessingStarted);
     socket.value.off(events.GUESS_SUBMITTED, handlers.guessSubmitted);
+    socket.value.off(events.GUESSING_ENDED, handlers.guessingEnded);
     socket.value.off(events.SCORES_FETCHING_ENDED, handlers.scoresFetched);
     socket.value.off(events.ROOM_UPDATED, handlers.roomUpdated);
   }

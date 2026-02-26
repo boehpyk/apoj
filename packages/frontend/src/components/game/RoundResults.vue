@@ -26,8 +26,11 @@
                 You
               </span>
             </div>
-            <div class="text-2xl font-bold text-blue-600">
-              {{ player.totalScore }} pts
+            <div class="text-right">
+              <div class="text-2xl font-bold text-blue-600">{{ player.totalScore }} pts</div>
+              <div v-if="singerBonusFor(player.playerId) > 0" class="text-xs text-orange-600">
+                incl. +{{ singerBonusFor(player.playerId) }} singing
+              </div>
             </div>
           </div>
         </div>
@@ -43,7 +46,13 @@
             class="border rounded-lg p-4 bg-gray-50"
           >
             <div class="mb-3 pb-3 border-b">
-              <div class="font-bold text-lg">Clue #{{ clue.clueIndex + 1 }}</div>
+              <div class="flex items-center justify-between">
+                <div class="font-bold text-lg">Clue #{{ clue.clueIndex + 1 }}</div>
+                <div v-if="clue.singerPlayerId" class="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded font-medium">
+                  Sung by {{ clue.singerPlayerId === myPlayerId ? 'you' : clue.singerPlayerName }}
+                  <span v-if="clue.singerBonus > 0"> · +{{ clue.singerBonus }} singer pts</span>
+                </div>
+              </div>
               <div class="text-sm text-gray-700 mt-1">
                 <span class="font-medium">Correct Answer:</span>
                 <span class="text-green-700">{{ clue.correctTitle }}</span>
@@ -157,6 +166,12 @@ const loading = ref(true);
 const error = ref(null);
 const clues = ref([]);
 const leaderboard = ref([]);
+
+function singerBonusFor(playerId) {
+  return clues.value
+    .filter(c => c.singerPlayerId === playerId)
+    .reduce((sum, c) => sum + (c.singerBonus || 0), 0);
+}
 
 async function fetchResults() {
   loading.value = true;

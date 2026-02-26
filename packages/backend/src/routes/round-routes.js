@@ -301,6 +301,8 @@ export function registerRoundRoutes(fastify, getIo) {
             return reply.code(401).send({ error: e.message });
         }
 
+        console.log(ctx);
+
         const { roundId } = req.params;
 
         try {
@@ -349,6 +351,8 @@ export function registerRoundRoutes(fastify, getIo) {
                 artist: row.artist
             }));
 
+            console.log(originalSongs);
+
             // Fetch all player guesses
             const guessesRes = await query(
                 `SELECT pg.player_id, pg.guesses, pg.submitted_at, p.name as player_name
@@ -358,10 +362,12 @@ export function registerRoundRoutes(fastify, getIo) {
                 [roundId]
             );
 
+            console.log(guessesRes.rows);
+
             const playerGuesses = guessesRes.rows.map(row => ({
                 playerId: row.player_id,
                 playerName: row.player_name,
-                guesses: JSON.parse(row.guesses),
+                guesses: row.guesses,
                 submittedAt: row.submitted_at
             }));
 
@@ -372,6 +378,8 @@ export function registerRoundRoutes(fastify, getIo) {
             // Assess with ChatGPT
             console.log('[score] Assessing guesses with AI...');
             const assessments = await assessGuessesWithAI(originalSongs, playerGuesses);
+
+            console.log(assessments);
 
             // Calculate scores and save to database
             const scoreResults = [];
@@ -467,9 +475,20 @@ export function registerRoundRoutes(fastify, getIo) {
         const { roundId } = req.params;
 
         try {
-            // Get scores with player names and song info
+            // Get scores with player names and song info.
+            // player_clue_map assigns each original-song owner a clue_index
+            // (ordered by player_id, same ordering used when scores were recorded).
             const scoresRes = await query(
-                `SELECT
+                `WITH player_clue_map AS (
+                    SELECT
+                        rpt.player_id,
+                        rpt.song_id,
+                        rpt.reverse_player_id,
+                        ROW_NUMBER() OVER (ORDER BY rpt.player_id) - 1 AS clue_index
+                    FROM round_player_tracks rpt
+                    WHERE rpt.round_id = $1
+                )
+                SELECT
                     rs.player_id,
                     p.name as player_name,
                     rs.clue_index,
@@ -482,18 +501,17 @@ export function registerRoundRoutes(fastify, getIo) {
                     rs.used_fallback,
                     s.title as correct_title,
                     s.artist as correct_artist,
-                    pg.guesses
-                 FROM round_scores rs
-                 JOIN players p ON rs.player_id = p.id
-                 JOIN round_player_tracks rpt ON rs.round_id = rpt.round_id AND rs.clue_index = (
-                     SELECT ROW_NUMBER() OVER (ORDER BY rpt2.player_id) - 1
-                     FROM round_player_tracks rpt2
-                     WHERE rpt2.round_id = rs.round_id AND rpt2.player_id = rpt.player_id
-                 )
-                 JOIN songs s ON rpt.song_id = s.id
-                 LEFT JOIN player_guesses pg ON rs.player_id = pg.player_id AND rs.round_id = pg.round_id
-                 WHERE rs.round_id = $1
-                 ORDER BY rs.clue_index, rs.total_points DESC`,
+                    pg.guesses,
+                    pcm.reverse_player_id as singer_player_id,
+                    singer.name as singer_player_name
+                FROM round_scores rs
+                JOIN players p ON rs.player_id = p.id
+                JOIN player_clue_map pcm ON pcm.clue_index = rs.clue_index
+                JOIN songs s ON pcm.song_id = s.id
+                LEFT JOIN players singer ON singer.id = pcm.reverse_player_id
+                LEFT JOIN player_guesses pg ON rs.player_id = pg.player_id AND rs.round_id = pg.round_id
+                WHERE rs.round_id = $1
+                ORDER BY rs.clue_index, rs.total_points DESC`,
                 [roundId]
             );
 
@@ -509,11 +527,13 @@ export function registerRoundRoutes(fastify, getIo) {
                         clueIndex,
                         correctTitle: row.correct_title,
                         correctArtist: row.correct_artist,
+                        singerPlayerId: row.singer_player_id,
+                        singerPlayerName: row.singer_player_name,
                         playerScores: []
                     };
                 }
 
-                const guesses = row.guesses ? JSON.parse(row.guesses) : [];
+                const guesses = row.guesses ?? [];
                 const playerGuess = guesses.find(g => g.clueIndex === clueIndex);
 
                 clueResults[clueIndex].playerScores.push({
@@ -538,6 +558,24 @@ export function registerRoundRoutes(fastify, getIo) {
                     };
                 }
                 playerTotals[row.player_id].totalScore += row.total_points;
+            }
+
+            // Compute singer bonus per clue and add to singer's total
+            const SINGER_BONUS_MULTIPLIER = 0.3;
+            for (const clue of Object.values(clueResults)) {
+                const sumOfPoints = clue.playerScores.reduce((sum, ps) => sum + ps.totalPoints, 0);
+                clue.singerBonus = Math.round(sumOfPoints * SINGER_BONUS_MULTIPLIER);
+
+                if (clue.singerPlayerId && clue.singerBonus > 0) {
+                    if (!playerTotals[clue.singerPlayerId]) {
+                        playerTotals[clue.singerPlayerId] = {
+                            playerId: clue.singerPlayerId,
+                            playerName: clue.singerPlayerName,
+                            totalScore: 0
+                        };
+                    }
+                    playerTotals[clue.singerPlayerId].totalScore += clue.singerBonus;
+                }
             }
 
             // Build leaderboard

@@ -1,6 +1,6 @@
 ---
 name: frontend-expert
-description: Expert coding assistant for the Vue 3 frontend service in packages/frontend. Use for frontend tasks: adding or modifying views and components, composables, routing, Socket.IO event handling, audio recording UI, Tailwind styling, or API integration.
+description: Expert coding assistant for the Vue 3 frontend service in packages/frontend. Use for frontend tasks like adding or modifying views and components, composables, routing, Socket.IO event handling, audio recording UI, Tailwind styling, or API integration.
 tools: Read, Write, Edit, Bash, Glob, Grep
 model: sonnet
 skills:
