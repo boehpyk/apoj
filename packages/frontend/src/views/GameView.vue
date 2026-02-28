@@ -42,6 +42,8 @@
           v-if="liveScores && liveScores.length"
           :scores="liveScores"
           :my-player-id="playerId"
+          :is-host="isHost"
+          :round-id="roundId"
         />
         <div v-else class="text-sm text-gray-500">Calculating scores...</div>
       </div>
@@ -112,6 +114,8 @@ const statuses = ref({});
 const progress = reactive({ uploaded: 0, total: 0 });
 const reverseMap = ref(null);
 const liveScores = ref(null);
+const hostId = ref(null);
+const isHost = computed(() => !!hostId.value && playerId === hostId.value);
 
 const { socket, connected, events, phases } = useSocket(roomCode, playerId);
 const socketStatus = computed(() => connected.value ? 'ws ok' : 'ws...');
@@ -188,6 +192,7 @@ async function fetchRoom() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'fail');
     players.value = data.players || [];
+    hostId.value = data.hostId || null;
   } catch (e) {
     error.value = e.message;
   } finally {
@@ -303,11 +308,18 @@ function registerEvents() {
   handlers.scoresFetched = (payload) => {
     console.log('SCORES_FETCHING_ENDED', payload);
     if (payload.roundId !== roundId.value) return;
+    if (liveScores.value && liveScores.value.length > 0) return; // Already processed — ignore duplicates
     liveScores.value = payload.scores || [];
     phase.value = ROUND_PHASES.SCORES_FETCHING;
-    setTimeout(() => {
-      phase.value = ROUND_PHASES.ROUND_ENDED;
-    }, 8000);
+  };
+
+  handlers.roundPhaseChanged = (payload) => {
+    if (payload.roundId !== roundId.value) return;
+    if (payload.phase === ROUND_PHASES.ROUND_ENDED) {
+      router.push(`/room/${roomCode}`);
+    } else {
+      phase.value = payload.phase;
+    }
   };
 
   handlers.roomUpdated = (state) => {
@@ -323,6 +335,7 @@ function registerEvents() {
   socket.value?.on?.(events.GUESS_SUBMITTED, handlers.guessSubmitted);
   socket.value?.on?.(events.GUESSING_ENDED, handlers.guessingEnded);
   socket.value?.on?.(events.SCORES_FETCHING_ENDED, handlers.scoresFetched);
+  socket.value?.on?.(events.ROUND_PHASE_CHANGED, handlers.roundPhaseChanged);
   socket.value?.on?.(events.ROOM_UPDATED, handlers.roomUpdated);
 }
 
@@ -348,6 +361,7 @@ onBeforeUnmount(() => {
     socket.value.off(events.GUESS_SUBMITTED, handlers.guessSubmitted);
     socket.value.off(events.GUESSING_ENDED, handlers.guessingEnded);
     socket.value.off(events.SCORES_FETCHING_ENDED, handlers.scoresFetched);
+    socket.value.off(events.ROUND_PHASE_CHANGED, handlers.roundPhaseChanged);
     socket.value.off(events.ROOM_UPDATED, handlers.roomUpdated);
   }
 });

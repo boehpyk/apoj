@@ -9,6 +9,8 @@ import { validateInputFile } from '../validators.js';
 import { query } from '../database.js';
 import { assessGuessesWithAI, calculateScore, checkArtistMatch } from '../score-calculator.js';
 import { EVENTS, ROUND_PHASES } from '../../../shared/constants/index.js';
+import { getRoomState } from '../room-manager.js';
+import { deleteObjectsByPrefix } from '../storage.js';
 
 /**
  * @param {import('fastify').FastifyInstance} fastify
@@ -301,8 +303,6 @@ export function registerRoundRoutes(fastify, getIo) {
             return reply.code(401).send({ error: e.message });
         }
 
-        console.log(ctx);
-
         const { roundId } = req.params;
 
         try {
@@ -322,13 +322,15 @@ export function registerRoundRoutes(fastify, getIo) {
             const round = roundRes.rows[0];
             const guessingStartedAt = round.guessing_started_at ? new Date(round.guessing_started_at) : null;
 
-            // Check if already scored
-            const existingScores = await query(
-                'SELECT COUNT(*) as count FROM round_scores WHERE round_id = $1',
-                [roundId]
+            // Atomically claim scoring rights — only the first concurrent request wins.
+            // UPDATE ... WHERE phase = SCORES_FETCHING is atomic in PostgreSQL and prevents
+            // the race condition where multiple clients all call triggerScoring() at once.
+            const claimResult = await query(
+                `UPDATE rounds SET phase = $1 WHERE id = $2 AND phase = $3 RETURNING id`,
+                [ROUND_PHASES.ROUND_ENDED, roundId, ROUND_PHASES.SCORES_FETCHING]
             );
 
-            if (parseInt(existingScores.rows[0].count) > 0) {
+            if (!claimResult.rows.length) {
                 return reply.code(400).send({ error: 'Round already scored' });
             }
 
@@ -351,8 +353,6 @@ export function registerRoundRoutes(fastify, getIo) {
                 artist: row.artist
             }));
 
-            console.log(originalSongs);
-
             // Fetch all player guesses
             const guessesRes = await query(
                 `SELECT pg.player_id, pg.guesses, pg.submitted_at, p.name as player_name
@@ -361,8 +361,6 @@ export function registerRoundRoutes(fastify, getIo) {
                  WHERE pg.round_id = $1`,
                 [roundId]
             );
-
-            console.log(guessesRes.rows);
 
             const playerGuesses = guessesRes.rows.map(row => ({
                 playerId: row.player_id,
@@ -378,8 +376,6 @@ export function registerRoundRoutes(fastify, getIo) {
             // Assess with ChatGPT
             console.log('[score] Assessing guesses with AI...');
             const assessments = await assessGuessesWithAI(originalSongs, playerGuesses);
-
-            console.log(assessments);
 
             // Calculate scores and save to database
             const scoreResults = [];
@@ -434,17 +430,13 @@ export function registerRoundRoutes(fastify, getIo) {
                     playerId: assessment.playerId,
                     playerName: playerGuess.playerName,
                     clueIndex: assessment.clueIndex,
+                    songTitle: original.title,
+                    songArtist: original.artist,
                     ...scoreBreakdown,
                     aiScore: assessment.aiScore,
                     reasoning: assessment.reasoning
                 });
             }
-
-            // Update round phase
-            await query(
-                'UPDATE rounds SET phase = $1 WHERE id = $2',
-                [ROUND_PHASES.ROUND_ENDED, roundId]
-            );
 
             // Emit scores to room
             const io = getIo();
@@ -589,6 +581,73 @@ export function registerRoundRoutes(fastify, getIo) {
         } catch (e) {
             console.error('[results] error:', e);
             reply.code(500).send({ error: 'Failed to fetch results' });
+        }
+    });
+
+    /**
+     * Host ends the round — broadcasts ROUND_PHASE_CHANGED to all players.
+     * POST /api/rounds/:roundId/end
+     */
+    fastify.post('/api/rounds/:roundId/end', async (req, reply) => {
+        let ctx;
+        try {
+            ctx = await validatePlayer(req);
+        } catch (e) {
+            return reply.code(401).send({ error: e.message });
+        }
+
+        const { roundId } = req.params;
+
+        try {
+            const room = await getRoomState(ctx.roomCode);
+            if (!room) return reply.code(404).send({ error: 'Room not found' });
+            if (room.hostId !== ctx.playerId) return reply.code(403).send({ error: 'Not host' });
+
+            await query('UPDATE rounds SET phase = $1 WHERE id = $2', [ROUND_PHASES.ROUND_ENDED, roundId]);
+
+            const io = getIo();
+            io.to(ctx.roomCode).emit(EVENTS.ROUND_PHASE_CHANGED, { roundId, phase: ROUND_PHASES.ROUND_ENDED });
+
+            reply.send({ ok: true });
+        } catch (e) {
+            console.error('[round/end] error:', e);
+            reply.code(500).send({ error: e.message });
+        }
+    });
+
+    /**
+     * Host ends the round and deletes all audio files for it from MinIO.
+     * POST /api/rounds/:roundId/cleanup
+     */
+    fastify.post('/api/rounds/:roundId/cleanup', async (req, reply) => {
+        let ctx;
+        try {
+            ctx = await validatePlayer(req);
+        } catch (e) {
+            return reply.code(401).send({ error: e.message });
+        }
+
+        const { roundId } = req.params;
+
+        try {
+            const room = await getRoomState(ctx.roomCode);
+            if (!room) return reply.code(404).send({ error: 'Room not found' });
+            if (room.hostId !== ctx.playerId) return reply.code(403).send({ error: 'Not host' });
+
+            await query('UPDATE rounds SET phase = $1 WHERE id = $2', [ROUND_PHASES.ROUND_ENDED, roundId]);
+
+            const prefixes = ['original', 'reversed-original', 'reverse-recording', 'final-audio'];
+            for (const prefix of prefixes) {
+                await deleteObjectsByPrefix('audio-recordings', `${prefix}/${roundId}/`);
+            }
+
+            const io = getIo();
+            io.to(ctx.roomCode).emit(EVENTS.ROUND_PHASE_CHANGED, { roundId, phase: ROUND_PHASES.ROUND_ENDED });
+
+            reply.send({ ok: true });
+        } catch (e) {
+            console.error('[round/cleanup] error:', e);
+            reply.code(500).send({ error: e.message });
         }
     });
 }

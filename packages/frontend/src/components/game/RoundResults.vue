@@ -100,11 +100,11 @@
                     <span class="font-medium">{{ score.basePoints }}</span>
                   </div>
                   <div v-if="score.speedBonus > 0" class="flex justify-between text-green-600">
-                    <span>Speed Bonus:</span>
+                    <span>Speed Bonus <span class="text-green-500 font-normal">({{ score.speedBonus === 25 ? 'guessed in &lt;30s' : 'guessed in &lt;45s' }}):</span></span>
                     <span class="font-medium">+{{ score.speedBonus }}</span>
                   </div>
                   <div v-if="score.artistBonus > 0" class="flex justify-between text-purple-600">
-                    <span>Artist Bonus:</span>
+                    <span>Artist Bonus <span class="text-purple-500 font-normal">(correct artist):</span></span>
                     <span class="font-medium">+{{ score.artistBonus }}</span>
                   </div>
                 </div>

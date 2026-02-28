@@ -124,7 +124,7 @@ export function registerRoomRoutes(fastify, getIo) {
             if (!state) throw new Error('Room not found');
             if (state.hostId !== playerId) throw new Error('Not host');
             if (state.status === 'ended') throw new Error('Already ended');
-            await query('UPDATE game_sessions SET status = $1, ended_at = NOW() WHERE room_code = $2', ['ended', code.toUpperCase()]);
+            await query('DELETE FROM game_sessions WHERE room_code = $1', [code.toUpperCase()]);
             const invalidated = await invalidateAllRoomTokens(code.toUpperCase());
             reply.send({ok: true, invalidated});
         } catch (e) {

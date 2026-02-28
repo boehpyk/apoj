@@ -61,3 +61,23 @@ export async function getObjectStream(bucket, objectName) {
     throw e;
   }
 }
+
+/**
+ * Delete all objects in a bucket whose names start with the given prefix.
+ * @param {string} bucket
+ * @param {string} prefix
+ * @returns {Promise<number>} number of objects deleted
+ */
+export async function deleteObjectsByPrefix(bucket, prefix) {
+  const names = await new Promise((resolve, reject) => {
+    const list = [];
+    const stream = client.listObjects(bucket, prefix, true);
+    stream.on('data', obj => list.push(obj.name));
+    stream.on('end', () => resolve(list));
+    stream.on('error', reject);
+  });
+  if (names.length > 0) {
+    await client.removeObjects(bucket, names);
+  }
+  return names.length;
+}

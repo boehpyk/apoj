@@ -50,7 +50,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, watch } from 'vue';
 import { useAudioRecorder } from '../../composables/useAudioRecorder.js';
 
 const props = defineProps({
@@ -116,11 +116,8 @@ async function fetchSongAudio() {
   }
 }
 
-onMounted(() => {
-  console.log('OriginalRecording mounted with song:', props.song);
-  if (props.song) {
-    fetchSongAudio();
-  }
-});
+watch(() => props.song, (newSong) => {
+  if (newSong) fetchSongAudio();
+}, { immediate: true });
 </script>
 
