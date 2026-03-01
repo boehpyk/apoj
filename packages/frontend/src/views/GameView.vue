@@ -31,8 +31,15 @@
       <GuessingPhase
         v-if="phase === phases.GUESSING"
         :round-id="roundId"
-        :uploaded-count="progress.uploaded"
+        :mode="gameMode"
+        :is-host="isHost"
+        :socket="socket"
+        :submitted-count="progress.uploaded"
         :total-players="progress.total"
+        :host-clue-index="guessingSync.clueIndex"
+        :host-total-clues="guessingSync.totalClues"
+        :host-audio-sync="guessingSync.audioSync"
+        :submit-now="guessingSync.submitNow"
         @submitted="handleGuessSubmitted"
       />
 
@@ -45,7 +52,16 @@
           :is-host="isHost"
           :round-id="roundId"
         />
-        <div v-else class="text-sm text-gray-500">Calculating scores...</div>
+        <div v-else class="flex flex-col items-center gap-4 py-12 text-center">
+          <svg class="animate-spin h-10 w-10 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+          </svg>
+          <div>
+            <p class="text-lg font-semibold text-gray-800">Asking the AI judge...</p>
+            <p class="text-sm text-gray-500 mt-1">Hang tight while your guesses are being assessed</p>
+          </div>
+        </div>
       </div>
 
       <!-- Round Results Phase -->
@@ -116,6 +132,15 @@ const reverseMap = ref(null);
 const liveScores = ref(null);
 const hostId = ref(null);
 const isHost = computed(() => !!hostId.value && playerId === hostId.value);
+const gameMode = ref('private');
+
+// State bridge for the guessing phase (public mode only)
+const guessingSync = reactive({
+  clueIndex: 0,
+  totalClues: 0,
+  audioSync: null,
+  submitNow: false,
+});
 
 const { socket, connected, events, phases } = useSocket(roomCode, playerId);
 const socketStatus = computed(() => connected.value ? 'ws ok' : 'ws...');
@@ -160,7 +185,8 @@ function handleReverseUploaded() {
 }
 
 function handleGuessSubmitted() {
-  console.log('Guess submitted');
+  guessingSync.submitNow = false;
+  progress.uploaded++;
 }
 
 async function triggerScoring() {
@@ -245,6 +271,7 @@ async function fetchRound() {
     }
 
     phase.value = data.phase || phase.value;
+    gameMode.value = data.mode || gameMode.value;
     songMap.value = data.assignments || {};
     integrateRound(data);
     if (!mySong.value) await fetchAssignedSong();
@@ -264,6 +291,7 @@ function registerEvents() {
   handlers.gameStarted = (payload) => {
     phase.value = payload.phase || 'originals_recording';
     roundId.value = payload.roundId;
+    gameMode.value = payload.mode || 'private';
     fetchRound();
   };
 
@@ -302,7 +330,24 @@ function registerEvents() {
   handlers.guessingEnded = (payload) => {
     console.log('GUESSING_ENDED', payload);
     if (payload.roundId !== roundId.value) return;
+    phase.value = ROUND_PHASES.SCORES_FETCHING;
     triggerScoring();
+  };
+
+  handlers.hostSongChanged = (payload) => {
+    if (payload.roundId !== roundId.value) return;
+    guessingSync.clueIndex = payload.clueIndex;
+    guessingSync.totalClues = payload.totalClues;
+  };
+
+  handlers.hostAudioSync = (payload) => {
+    if (payload.roundId !== roundId.value) return;
+    guessingSync.audioSync = { ...payload };
+  };
+
+  handlers.guessingSubmitNow = (payload) => {
+    if (payload.roundId !== roundId.value) return;
+    guessingSync.submitNow = true;
   };
 
   handlers.scoresFetched = (payload) => {
@@ -337,6 +382,9 @@ function registerEvents() {
   socket.value?.on?.(events.SCORES_FETCHING_ENDED, handlers.scoresFetched);
   socket.value?.on?.(events.ROUND_PHASE_CHANGED, handlers.roundPhaseChanged);
   socket.value?.on?.(events.ROOM_UPDATED, handlers.roomUpdated);
+  socket.value?.on?.(events.HOST_SONG_CHANGED, handlers.hostSongChanged);
+  socket.value?.on?.(events.HOST_AUDIO_SYNC, handlers.hostAudioSync);
+  socket.value?.on?.(events.GUESSING_SUBMIT_NOW, handlers.guessingSubmitNow);
 }
 
 onMounted(() => {
@@ -363,6 +411,9 @@ onBeforeUnmount(() => {
     socket.value.off(events.SCORES_FETCHING_ENDED, handlers.scoresFetched);
     socket.value.off(events.ROUND_PHASE_CHANGED, handlers.roundPhaseChanged);
     socket.value.off(events.ROOM_UPDATED, handlers.roomUpdated);
+    socket.value.off(events.HOST_SONG_CHANGED, handlers.hostSongChanged);
+    socket.value.off(events.HOST_AUDIO_SYNC, handlers.hostAudioSync);
+    socket.value.off(events.GUESSING_SUBMIT_NOW, handlers.guessingSubmitNow);
   }
 });
 </script>

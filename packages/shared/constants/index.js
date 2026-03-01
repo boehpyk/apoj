@@ -16,6 +16,9 @@ export const EVENTS = {
     SCORES_FETCHING_STARTED: 'scores_fetching_started',
     SCORES_FETCHING_ENDED: 'scores_fetching_ended',
     ROUND_SCORED: 'round_scored',
+    HOST_SONG_CHANGED: 'host_song_changed',
+    HOST_AUDIO_SYNC: 'host_audio_sync',
+    GUESSING_SUBMIT_NOW: 'guessing_submit_now',
 };
 
 /**

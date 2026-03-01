@@ -4,7 +4,7 @@ import { Server } from 'socket.io';
 import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
 
-import { testConnection } from './database.js';
+import { testConnection, query } from './database.js';
 import { testRedis } from './redis.js';
 import { ensureBuckets } from './storage.js';
 import { getRoomState } from './room-manager.js';
@@ -76,7 +76,8 @@ initInfra().then(() => {
                         socket.emit(EVENTS.GAME_STARTED, {
                             roomCode: roomCode.toUpperCase(),
                             roundId: round.roundId,
-                            phase: round.phase
+                            phase: round.phase,
+                            mode: round.mode || 'private',
                         });
                         const meta = connections.get(socket.id);
                         const pid = meta?.playerId;
@@ -88,6 +89,31 @@ initInfra().then(() => {
                     }
                 } catch {
                 }
+            });
+
+            // Host navigates to a different song during guessing (public mode)
+            socket.on(EVENTS.HOST_SONG_CHANGED, async ({ roundId, clueIndex } = {}) => {
+                const { roomCode, playerId } = connections.get(socket.id) || {};
+                if (!roomCode || !playerId || typeof clueIndex !== 'number') return;
+                const room = await getRoomState(roomCode);
+                if (!room || room.hostId !== playerId) return;
+                const countRes = await query(
+                    'SELECT COUNT(*) AS count FROM round_player_tracks WHERE round_id = $1 AND final_path IS NOT NULL',
+                    [roundId]
+                );
+                io.to(roomCode).emit(EVENTS.HOST_SONG_CHANGED, {
+                    roundId, clueIndex, totalClues: parseInt(countRes.rows[0].count)
+                });
+            });
+
+            // Host plays or pauses the current audio (public mode)
+            socket.on(EVENTS.HOST_AUDIO_SYNC, async ({ roundId, clueIndex, action, positionSeconds } = {}) => {
+                const { roomCode, playerId } = connections.get(socket.id) || {};
+                if (!roomCode || !playerId) return;
+                if (!['play', 'pause'].includes(action)) return;
+                const room = await getRoomState(roomCode);
+                if (!room || room.hostId !== playerId) return;
+                io.to(roomCode).emit(EVENTS.HOST_AUDIO_SYNC, { roundId, clueIndex, action, positionSeconds });
             });
 
             socket.on('disconnect', () => {

@@ -78,12 +78,14 @@ export function registerRoomRoutes(fastify, getIo) {
         }
 
         try {
-            const started = await startGame(code);
+            const { mode = 'private' } = req.body || {};
+            const started = await startGame(code, mode);
 
             io.to(code.toUpperCase()).emit(EVENTS.GAME_STARTED, {
                 roomCode: started.roomCode,
                 roundId: started.roundId,
-                phase: started.phase
+                phase: started.phase,
+                mode: started.mode
             });
             reply.send(started);
         } catch (e) {

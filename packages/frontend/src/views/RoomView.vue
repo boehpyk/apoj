@@ -12,6 +12,17 @@
         <li v-for="p in players" :key="p.id" :class="{'font-semibold': p.id === hostId}">{{ p.name }}<span v-if="p.id===hostId" class="text-xs text-gray-500"> (host)</span></li>
       </ul>
       <div class="pt-4" v-if="isHost">
+        <div class="mb-3 space-y-1">
+          <p class="text-sm font-medium text-gray-700">Guessing mode</p>
+          <label class="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="radio" v-model="gameMode" value="public" />
+            <span><span class="font-medium">Party Mode</span> — host controls playback on shared screen</span>
+          </label>
+          <label class="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="radio" v-model="gameMode" value="private" />
+            <span><span class="font-medium">Classic</span> — everyone guesses privately with a timer</span>
+          </label>
+        </div>
         <button @click="startGame" :disabled="players.length < 2 || starting" class="px-4 py-2 rounded text-white"
                 :class="players.length < 2 || starting ? 'bg-gray-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'">
           {{ starting ? 'Starting...' : 'Start Game' }}
@@ -41,6 +52,7 @@ const error = ref(null);
 const players = ref([]);
 const hostId = ref(null);
 const starting = ref(false);
+const gameMode = ref('public');
 const isHost = computed(() => hostId.value && playerId === hostId.value);
 const { socket, connected, events, off } = useSocket(roomCode, playerId);
 const socketStatus = computed(() => connected.value ? 'ws ok' : 'ws...');
@@ -80,8 +92,10 @@ function startGame(){
   fetch(`/api/rooms/${roomCode}/start`, {
     method: 'POST',
     headers: {
-      'x-player-token': playerToken
-    }
+      'x-player-token': playerToken,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ mode: gameMode.value })
   }).then(r => r.json()).then(data => {
     if (data.error) {
       console.warn('[room] start error', data.error);

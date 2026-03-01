@@ -32,7 +32,7 @@ export function validateStartGame(roomState, playerId) {
  * @param roomCode
  * @returns {Promise<{roomCode: string, roundId: *, phase: string, assignments: {}}>}
  */
-export async function startGame(roomCode) {
+export async function startGame(roomCode, mode = 'private') {
     const code = (roomCode || '').toUpperCase();
     const room = await getRoomState(code);
 
@@ -44,7 +44,7 @@ export async function startGame(roomCode) {
     await query('UPDATE game_sessions SET status = $1 WHERE room_code = $2', [STATUSES.PLAYING, code]);
 
     // Create round 1
-    const roundId = await createRound(code);
+    const roundId = await createRound(code, mode);
 
     try {
         const assignments = await assignSongs(room, roundId);
@@ -53,7 +53,8 @@ export async function startGame(roomCode) {
         const state = {
             roundId,
             phase: ROUND_PHASES.ORIGINALS_RECORDING,
-            assignments
+            assignments,
+            mode
         };
         await redis.set(roundKey(code), JSON.stringify(state), 'EX', 3600);
 
@@ -68,7 +69,8 @@ export async function startGame(roomCode) {
             roomCode: code,
             roundId,
             phase: state.phase,
-            assignments
+            assignments,
+            mode
         };
     } catch (err) {
         throw err;
@@ -173,10 +175,11 @@ export async function getRoundState(roomCode) {
         });
         return {...parsed, statuses};
     }
-    const roundRes = await query('SELECT r.id, r.phase FROM rounds r JOIN game_sessions s ON r.session_id = s.id WHERE s.room_code = $1 ORDER BY r.round_number DESC LIMIT 1', [code]);
+    const roundRes = await query('SELECT r.id, r.phase, r.mode FROM rounds r JOIN game_sessions s ON r.session_id = s.id WHERE s.room_code = $1 ORDER BY r.round_number DESC LIMIT 1', [code]);
     if (!roundRes.rows.length) return null;
     const roundId = roundRes.rows[0].id;
     const phase = roundRes.rows[0].phase || ROUND_PHASES.ORIGINALS_RECORDING;
+    const mode = roundRes.rows[0].mode || 'private';
     const tracksRes = await query('SELECT player_id, song_id, status FROM round_player_tracks WHERE round_id = $1', [roundId]);
     const assignments = {};
     const statuses = {};
@@ -184,8 +187,8 @@ export async function getRoundState(roomCode) {
         assignments[r.player_id] = r.song_id;
         statuses[r.player_id] = r.status;
     });
-    const state = {roundId, phase, assignments, statuses};
-    await redis.set(roundKey(code), JSON.stringify({roundId, phase, assignments}), 'EX', 3600);
+    const state = {roundId, phase, mode, assignments, statuses};
+    await redis.set(roundKey(code), JSON.stringify({roundId, phase, mode, assignments}), 'EX', 3600);
     return state;
 }
 
@@ -364,10 +367,10 @@ export async function uploadReverseRecording(ctx, file) {
  * @param code
  * @returns {Promise<*>}
  */
-const createRound = async (code) => {
+const createRound = async (code, mode = 'private') => {
     const roundResult = await query(
-        'INSERT INTO rounds (session_id, round_number, phase) SELECT id, $1, $2 FROM game_sessions WHERE room_code = $3 RETURNING id',
-        [1, ROUND_PHASES.ORIGINALS_RECORDING, code]
+        'INSERT INTO rounds (session_id, round_number, phase, mode) SELECT id, $1, $2, $3 FROM game_sessions WHERE room_code = $4 RETURNING id',
+        [1, ROUND_PHASES.ORIGINALS_RECORDING, mode, code]
     );
     return roundResult.rows[0].id;
 }

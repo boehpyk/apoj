@@ -17,7 +17,11 @@ Music enthusiasts 13+, casual social gamers, streamers, remote hangouts.
 2. **Originals Recording** (simultaneous, max 60s) — All players record their snippet forward (10–40s, webm/opus). Each upload triggers immediate FFmpeg reversal.
 3. **Derangement Assignment** — Once all originals are reversed, the server shuffles assignments so each player receives another player's reversed audio (no self-assignment). For n=2, force swap.
 4. **Reverse Recording** (simultaneous, max 90s) — Each player listens to their assigned reversed audio and records an imitation (≥10s). Each upload triggers a second FFmpeg reversal → final clue.
-5. **Guessing Phase** (MVP: consolidated, 60s window) — All final clues listed at once; players submit title + optional artist for each clue before the timer expires. Auto-submit on timer end.
+5. **Guessing Phase** — Two modes, chosen by the host at game start.
+
+   *Private mode:* All final clues are listed simultaneously. Each player independently listens and fills in title + optional artist + notes for every clue. A 60s per-clue timer starts when the player first plays a clue's audio and auto-advances through clues. The form auto-submits when time runs out. Once all players have submitted, scoring begins.
+
+   *Public mode:* The host controls the experience for the whole room. One clue is shown at a time; host navigates with Prev / Next and plays or pauses audio — the play/pause state syncs to all clients in real time. Players fill in guesses for whichever clue the host is presenting. When the host clicks "End Guessing," a `GUESSING_SUBMIT_NOW` event gives clients 5 s to auto-submit any pending guesses; a 7 s server-side safety net then forces the phase transition regardless. Once the phase moves to `SCORES_FETCHING`, scoring begins.
 6. **Scoring** — AI (ChatGPT) assesses how close each guess is; Levenshtein fallback if API fails.
 7. **Results** — Leaderboard displayed; highest cumulative points across rounds wins.
 

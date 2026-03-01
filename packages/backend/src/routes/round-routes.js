@@ -270,17 +270,21 @@ export function registerRoundRoutes(fastify, getIo) {
 
             const totalPlayers = parseInt(totalRes.rows[0].count);
 
-            // If all players submitted, move to scoring phase
+            const io = getIo();
+            io.to(round.room_code).emit(EVENTS.GUESS_SUBMITTED, {
+                roundId,
+                submittedCount,
+                totalPlayers,
+            });
+
             if (submittedCount >= totalPlayers) {
                 await query(
-                    'UPDATE rounds SET phase = $1 WHERE id = $2',
-                    [ROUND_PHASES.SCORES_FETCHING, roundId]
+                    'UPDATE rounds SET phase = $1 WHERE id = $2 AND phase = $3',
+                    [ROUND_PHASES.SCORES_FETCHING, roundId, ROUND_PHASES.GUESSING]
                 );
-
-                const io = getIo();
                 io.to(round.room_code).emit(EVENTS.GUESSING_ENDED, {
                     roundId,
-                    phase: ROUND_PHASES.SCORES_FETCHING
+                    phase: ROUND_PHASES.SCORES_FETCHING,
                 });
             }
 
@@ -288,6 +292,61 @@ export function registerRoundRoutes(fastify, getIo) {
         } catch (e) {
             console.error('[guess] error:', e);
             reply.code(500).send({ error: 'Failed to submit guess' });
+        }
+    });
+
+    /**
+     * Host ends the guessing phase (public mode only)
+     * POST /api/rounds/:roundId/end-guessing
+     */
+    fastify.post('/api/rounds/:roundId/end-guessing', async (req, reply) => {
+        let ctx;
+        try {
+            ctx = await validatePlayer(req);
+        } catch (e) {
+            return reply.code(401).send({ error: e.message });
+        }
+
+        const { roundId } = req.params;
+
+        try {
+            const room = await getRoomState(ctx.roomCode);
+            if (!room) return reply.code(404).send({ error: 'Room not found' });
+            if (room.hostId !== ctx.playerId) return reply.code(403).send({ error: 'Not host' });
+
+            const roundRes = await query('SELECT phase FROM rounds WHERE id = $1', [roundId]);
+            if (!roundRes.rows.length) return reply.code(404).send({ error: 'Round not found' });
+            if (roundRes.rows[0].phase !== ROUND_PHASES.GUESSING) {
+                return reply.code(400).send({ error: 'Not in guessing phase' });
+            }
+
+            const io = getIo();
+            const deadlineMs = Date.now() + 5000;
+            io.to(ctx.roomCode).emit(EVENTS.GUESSING_SUBMIT_NOW, { roundId, deadlineMs });
+
+            // Safety-net: emit GUESSING_ENDED 7s after host triggers end, regardless of submissions
+            setTimeout(async () => {
+                try {
+                    const check = await query('SELECT phase FROM rounds WHERE id = $1', [roundId]);
+                    if (check.rows[0]?.phase === ROUND_PHASES.GUESSING) {
+                        await query(
+                            'UPDATE rounds SET phase = $1 WHERE id = $2 AND phase = $3',
+                            [ROUND_PHASES.SCORES_FETCHING, roundId, ROUND_PHASES.GUESSING]
+                        );
+                        io.to(ctx.roomCode).emit(EVENTS.GUESSING_ENDED, {
+                            roundId,
+                            phase: ROUND_PHASES.SCORES_FETCHING
+                        });
+                    }
+                } catch (e) {
+                    console.error('[end-guessing] safety-net error:', e);
+                }
+            }, 60000);
+
+            reply.send({ ok: true, deadlineMs });
+        } catch (e) {
+            console.error('[end-guessing] error:', e);
+            reply.code(500).send({ error: e.message });
         }
     });
 
