@@ -2,9 +2,9 @@ services:
   postgres:
     image: postgres:13
     environment:
-      POSTGRES_DB: reverse_song
-      POSTGRES_USER: reverse_user
-      POSTGRES_PASSWORD: reverse_pass
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - '5432:5432'
     volumes:
@@ -16,28 +16,42 @@ services:
   minio:
     image: minio/minio
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     command: server /data --console-address ":9001"
     ports:
-      - '9000:9000'
-      - '9001:9001'
+      - '${MINIO_PORT}:9000'
+      - '${MINIO_CONSOLE_PORT}:${MINIO_CONSOLE_PORT}'
     volumes:
       - minio_data:/data
   backend:
     image: node:20-alpine
     working_dir: /workspace/packages/backend
     environment:
-      - CI=true
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
+      - MINIO_PORT=${MINIO_PORT}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - MINIO_PUBLIC_HOST=${MINIO_PUBLIC_HOST}
+      - MINIO_PUBLIC_PORT=${MINIO_PUBLIC_PORT}
+      - MINIO_PUBLIC_PROTOCOL=${MINIO_PUBLIC_PROTOCOL}
+      - NODE_ENV=${NODE_ENV}
+      - PORT=${BACKEND_PORT}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL}
+      - OPENAI_TIMEOUT=${OPENAI_TIMEOUT}
+      - LOG_LEVEL=${LOG_LEVEL}
       - PNPM_HOME=/pnpm
-      - MINIO_PUBLIC_HOST=localhost
-      - MINIO_PUBLIC_PORT=9000
+      - CI=true
     volumes:
       - ./:/workspace
       - pnpm-store:/pnpm
     command: sh -c "corepack enable && pnpm install --filter backend --prod --ignore-scripts --no-frozen-lockfile && pnpm --filter backend run start"
     ports:
-      - '3000:3000'
+      - '${BACKEND_PORT}:${BACKEND_PORT}'
+      - '${DEBUG_PORT}:9229'
     depends_on:
       - postgres
       - redis
@@ -53,9 +67,20 @@ services:
       - pnpm-store:/pnpm
     command: sh -c "corepack enable && pnpm install --filter frontend --ignore-scripts --no-frozen-lockfile && pnpm --filter frontend run build && pnpm --filter frontend run preview --host 0.0.0.0"
     ports:
-      - '4173:4173'
+      - '${FRONTEND_PORT}:5173'
     depends_on:
       - backend
+  nginx:
+    image: nginx:alpine
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - backend
+      - frontend
 volumes:
   postgres_data:
   minio_data:
