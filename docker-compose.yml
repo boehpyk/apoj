@@ -25,8 +25,9 @@ services:
     volumes:
       - minio_data:/data
   backend:
-    image: node:20-alpine
-    working_dir: /workspace/packages/backend
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile.prod
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
@@ -43,12 +44,6 @@ services:
       - OPENAI_MODEL=${OPENAI_MODEL}
       - OPENAI_TIMEOUT=${OPENAI_TIMEOUT}
       - LOG_LEVEL=${LOG_LEVEL}
-      - PNPM_HOME=/pnpm
-      - CI=true
-    volumes:
-      - ./:/workspace
-      - pnpm-store:/pnpm
-    command: sh -c "corepack enable && pnpm install --filter backend --prod --ignore-scripts --no-frozen-lockfile && pnpm --filter backend run start"
     ports:
       - '${BACKEND_PORT}:${BACKEND_PORT}'
       - '${DEBUG_PORT}:9229'
