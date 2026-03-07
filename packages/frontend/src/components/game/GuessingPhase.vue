@@ -24,7 +24,10 @@
         <div v-if="currentClue" class="p-4 border rounded-lg bg-gray-50 space-y-3">
           <div class="flex items-center justify-between">
             <h4 class="font-medium">Clue #{{ hostClueIndex + 1 }}</h4>
-            <span class="text-xs text-gray-500">Performed by: {{ currentClue.imitationPlayerName }}</span>
+            <div class="text-xs text-gray-500 text-right">
+              <div>Original performed by: {{ currentClue.originalPlayerName }}</div>
+              <div>Reversed performed by: {{ currentClue.imitationPlayerName }}</div>
+            </div>
           </div>
 
           <audio ref="audioEl" :src="currentClue.finalAudioUrl" preload="auto" class="w-full" />
@@ -133,7 +136,10 @@
           >
             <div class="flex items-center justify-between mb-3">
               <h4 class="font-medium">Clue #{{ clue.clueIndex + 1 }}</h4>
-              <span class="text-xs text-gray-500">Performed by: {{ clue.imitationPlayerName }}</span>
+              <div class="text-xs text-gray-500 text-right">
+                <div>Original performed by: {{ clue.originalPlayerName }}</div>
+                <div>Reversed performed by: {{ clue.imitationPlayerName }}</div>
+              </div>
             </div>
 
             <div class="mb-3">

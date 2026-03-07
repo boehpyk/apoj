@@ -5,6 +5,28 @@ import { query } from '../database.js';
 import { EVENTS } from '../../../shared/constants/index.js';
 
 /**
+ * Extracts and validates the player token from the request.
+ * Sends a 401 response and returns null if the token is missing or invalid.
+ *
+ * @param {import('fastify').FastifyRequest} req
+ * @param {import('fastify').FastifyReply} reply
+ * @returns {Promise<string|null>} The authenticated playerId, or null if auth failed
+ */
+async function resolvePlayerId(req, reply) {
+    const token = requireToken(req);
+    if (!token) {
+        reply.code(401).send({ error: 'Missing token' });
+        return null;
+    }
+    const meta = await verifyToken(token);
+    if (!meta) {
+        reply.code(401).send({ error: 'Invalid token' });
+        return null;
+    }
+    return meta.playerId;
+}
+
+/**
  * @param {import('fastify').FastifyInstance} fastify
  * @param {() => import('socket.io').Server} getIo
  */
@@ -52,15 +74,8 @@ export function registerRoomRoutes(fastify, getIo) {
     fastify.post('/api/rooms/:code/start', async (req, reply) => {
         const { code } = req.params;
 
-        const token = requireToken(req);
-        if (!token) {
-            return reply.code(401).send({ error: 'Missing token' });
-        }
-        const meta = await verifyToken(token);
-        if (!meta) {
-            return reply.code(401).send({ error: 'Invalid token' });
-        }
-        const playerId = meta.playerId;
+        const playerId = await resolvePlayerId(req, reply);
+        if (!playerId) return;
 
         const roomState = await getRoomState(code.toUpperCase());
 
@@ -111,15 +126,8 @@ export function registerRoomRoutes(fastify, getIo) {
     fastify.post('/api/rooms/:code/end', async (req, reply) => {
         const {code} = req.params;
 
-        const token = requireToken(req);
-        if (!token) {
-            return reply.code(401).send({ error: 'Missing token' });
-        }
-        const meta = await verifyToken(token);
-        if (!meta) {
-            return reply.code(401).send({ error: 'Invalid token' });
-        }
-        const playerId = meta.playerId;
+        const playerId = await resolvePlayerId(req, reply);
+        if (!playerId) return;
 
         try {
             const state = await getRoomState(code.toUpperCase());
