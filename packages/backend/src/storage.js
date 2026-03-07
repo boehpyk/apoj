@@ -10,9 +10,22 @@ const clientParams = {
 };
 const client = new Client(clientParams);
 
+// Separate client for pre-signed URLs using the public endpoint.
+// The minio-js SDK computes signatures locally based on endPoint, so the
+// signed URL will contain the public host the browser can actually reach.
+// Passing region explicitly avoids a network call for region auto-detection,
+// which would fail since the public host isn't reachable from inside Docker.
 const PUBLIC_HOST = process.env.MINIO_PUBLIC_HOST || 'localhost';
-const PUBLIC_PORT = process.env.MINIO_PUBLIC_PORT || (process.env.MINIO_PORT || '9000');
+const PUBLIC_PORT = parseInt(process.env.MINIO_PUBLIC_PORT || process.env.MINIO_PORT || '9000', 10);
 const PUBLIC_PROTOCOL = process.env.MINIO_PUBLIC_PROTOCOL || 'http';
+const publicClient = new Client({
+    endPoint: PUBLIC_HOST,
+    port: PUBLIC_PORT,
+    useSSL: PUBLIC_PROTOCOL === 'https',
+    accessKey: process.env.MINIO_ACCESS_KEY || 'minioadmin',
+    secretKey: process.env.MINIO_SECRET_KEY || 'minioadmin',
+    region: 'us-east-1',
+});
 
 export function getStorage() { return client; }
 
@@ -32,23 +45,9 @@ export async function putObject(bucket, objectName, data, meta = {}) {
 
 export async function getPresignedUrl(bucket, objectName, expirySeconds = 300) {
   try {
-    const raw = await client.presignedGetObject(bucket, objectName, expirySeconds);
-    // Rewrite internal host (minio) to public host if needed
-    try {
-      const u = new URL(raw);
-      if (PUBLIC_HOST && PUBLIC_HOST !== u.hostname) {
-        u.hostname = PUBLIC_HOST;
-      }
-      if (PUBLIC_PORT && PUBLIC_PORT !== u.port) {
-        u.port = PUBLIC_PORT;
-      }
-      if (PUBLIC_PROTOCOL && PUBLIC_PROTOCOL !== u.protocol.replace(':','')) {
-        u.protocol = PUBLIC_PROTOCOL + ':';
-      }
-      return u.toString();
-    } catch { return raw; }
+    return await publicClient.presignedGetObject(bucket, objectName, expirySeconds);
   } catch (e) {
-    console.error('[storage] presigned url error', bucket, objectName, e.message);
+    console.error('[storage] presigned url error', bucket, objectName, e);
     return null;
   }
 }
@@ -60,6 +59,10 @@ export async function getObjectStream(bucket, objectName) {
     console.error('[storage] get object error', bucket, objectName, e.message);
     throw e;
   }
+}
+
+export async function deleteObject(bucket, objectName) {
+  return client.removeObject(bucket, objectName);
 }
 
 /**

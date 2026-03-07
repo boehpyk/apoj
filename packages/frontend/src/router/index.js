@@ -2,11 +2,13 @@ import { createRouter, createWebHistory } from 'vue-router';
 import HomeView from '../views/HomeView.vue';
 import RoomView from '../views/RoomView.vue';
 import GameView from '../views/GameView.vue';
+import AdminView from '../views/AdminView.vue';
 
 const routes = [
   { path: '/', component: HomeView },
   { path: '/room/:code', component: RoomView },
-  { path: '/game/:code', component: GameView }
+  { path: '/game/:code', component: GameView },
+  { path: '/admin', component: AdminView }
 ];
 
 export default createRouter({

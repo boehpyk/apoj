@@ -99,10 +99,10 @@ export function registerAudioRoutes(fastify, getIo) {
             const assign = await query('SELECT 1 FROM round_player_tracks WHERE round_id = $1 AND player_id = $2 AND song_id = $3 LIMIT 1', [roundId, ctx.playerId, songId]);
             if (!assign.rows.length) return reply.code(403).send({error: 'Forbidden'});
 
-            const songRes = await query('SELECT midi_file_path FROM songs WHERE id = $1', [songId]);
+            const songRes = await query('SELECT audio_file_path FROM songs WHERE id = $1', [songId]);
             if (!songRes.rows.length) return reply.code(404).send({error: 'Not found'});
 
-            const objectName = songRes.rows[0].midi_file_path;
+            const objectName = songRes.rows[0].audio_file_path;
             return streamAudioObject(reply, objectName, inferAudioMimeType(objectName));
         } catch (e) {
             reply.code(404).send({error: 'Not found'});

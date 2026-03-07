@@ -20,6 +20,7 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+
     command: server /data --console-address ":${MINIO_CONSOLE_PORT}"
     ports:
       - '${MINIO_PORT}:9000'
@@ -48,6 +49,7 @@ services:
       - OPENAI_MODEL=${OPENAI_MODEL}
       - OPENAI_TIMEOUT=${OPENAI_TIMEOUT}
       - LOG_LEVEL=${LOG_LEVEL}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - PNPM_HOME=/pnpm
       - CI=true
     volumes:

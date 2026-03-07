@@ -15,6 +15,7 @@ import { EVENTS } from '../../shared/constants/index.js';
 import { registerRoomRoutes } from './routes/room-routes.js';
 import { registerRoundRoutes } from './routes/round-routes.js';
 import { registerAudioRoutes } from './routes/audio-routes.js';
+import { registerAdminRoutes } from './routes/admin-routes.js';
 
 const fastify = Fastify();
 
@@ -31,6 +32,7 @@ const getIo = () => io;
 registerRoomRoutes(fastify, getIo);
 registerRoundRoutes(fastify, getIo);
 registerAudioRoutes(fastify, getIo);
+registerAdminRoutes(fastify);
 
 /**
  * Initialize infrastructure: DB, Redis, Storage

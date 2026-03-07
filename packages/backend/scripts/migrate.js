@@ -98,6 +98,26 @@ async function migrate() {
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   )`);
 
+  // Songs table: replace unused midi_file_path with audio_file_path, add description, make lyrics nullable
+  await query('ALTER TABLE songs DROP COLUMN IF EXISTS midi_file_path');
+  await query('ALTER TABLE songs ADD COLUMN IF NOT EXISTS audio_file_path VARCHAR(512)');
+  await query('ALTER TABLE songs ADD COLUMN IF NOT EXISTS description TEXT');
+  await query('ALTER TABLE songs ALTER COLUMN lyrics DROP NOT NULL');
+
+  // Tags
+  await query(`CREATE TABLE IF NOT EXISTS tags (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(100) UNIQUE NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  // Song-tag junction
+  await query(`CREATE TABLE IF NOT EXISTS song_tags (
+    song_id UUID NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
+    tag_id  UUID NOT NULL REFERENCES tags(id)  ON DELETE CASCADE,
+    PRIMARY KEY (song_id, tag_id)
+  )`);
+
   console.log('[migrate] completed');
 }
 
