@@ -59,13 +59,14 @@ Description: Returns current room state. Reads from Redis first; falls back to P
 ---
 
 ### POST /api/rooms/:code/start
-Auth: none (but validates `playerId` in body matches `hostId` in room state)
+Auth: `X-Player-Token` header (required)
 Path params: `code` (string)
-Body: `{ playerId: uuid }`
-Response 200: `{ roomCode: string, roundId: uuid, phase: "originals_recording", assignments: { [playerId]: songId } }`
+Body: `{ mode?: string }` — optional game mode, defaults to `"private"`
+Response 200: `{ roomCode: string, roundId: uuid, phase: "originals_recording", mode: string, assignments: { [playerId]: songId } }`
 Response 400: `{ error: string }` — possible messages: `Room not found`, `Not host`, `Already started`, `Need at least 2 players`, `Not enough songs`
+Response 401: `{ error: string }` — `Missing token` or `Invalid token`
 Response 500: `{ error: "WebSocket not initialized" }` or `{ error: string }`
-Description: Host-only action. Validates that the caller is the host and the room is still waiting. Creates a `rounds` row (round number 1), picks `n` random songs (one per player), inserts `round_player_tracks` rows, caches round state in Redis, and emits `GAME_STARTED` to the Socket.IO room. Requires at least 2 players.
+Description: Host-only action. Validates the caller's token to confirm they are the host, and that the room is still waiting. Creates a `rounds` row (round number 1), picks `n` random songs (one per player), inserts `round_player_tracks` rows, caches round state in Redis, and emits `game_started` to the Socket.IO room. Requires at least 2 players. The `mode` field is stored in the round and forwarded in the socket event.
 Socket.IO side-effect: emits `game_started` to the room — see Socket.IO section.
 
 ---
@@ -80,12 +81,12 @@ Description: Returns the current round state for a room. Merges Redis-cached rou
 ---
 
 ### POST /api/rooms/:code/end
-Auth: none (but validates `playerId` in body matches `hostId`)
+Auth: `X-Player-Token` header (required)
 Path params: `code` (string)
-Body: `{ playerId: uuid }`
 Response 200: `{ ok: true, invalidated: number }`
 Response 400: `{ error: string }` — possible messages: `Room not found`, `Not host`, `Already ended`
-Description: Host-only action. Updates `game_sessions.status` to `ended`, sets `ended_at = NOW()`, then invalidates all player tokens in the room (removes both `player_token:{playerId}` and `token_lookup:{token}` keys from Redis). Returns the count of tokens invalidated.
+Response 401: `{ error: string }` — `Missing token` or `Invalid token`
+Description: Host-only action. Deletes the `game_sessions` row for the room, then invalidates all player tokens in the room (removes both `player_token:{playerId}` and `token_lookup:{token}` keys from Redis). Returns the count of tokens invalidated.
 
 ---
 
@@ -108,7 +109,7 @@ Response 400: `{ error: string }` — e.g. `No file`, `Invalid type`, `File too 
 Response 401: `{ error: string }`
 Response 500: `{ error: "WebSocket not initialized" }`
 Description: Accepts the player's original singing recording. Validates the player's track is still in `originals_recording` status, stores the raw file to MinIO at `original/{roundId}/{playerId}.webm`, synchronously reverses it via FFmpeg (`areverse` filter, using temp files in `os.tmpdir()`), stores the reversed file at `reversed-original/{roundId}/{playerId}.webm`, and updates the `round_player_tracks` row to `original_reversed_ready`.
-After upload, emits `ORIGINAL_UPLOADED` to the room. If all players have now uploaded, triggers derangement assignment (no player gets their own recording) and emits `REVERSED_RECORDING_STARTED`.
+After upload, emits `original_uploaded` to the room. If all players have now uploaded, triggers derangement assignment (no player gets their own recording) and emits `reversed_recording_started`.
 
 ---
 
@@ -120,7 +121,7 @@ Response 200: `{ ok: true, reverseRecording: string, finalAudio: string }`
 Response 400: `{ error: string }` — e.g. `No file`, `Invalid type`, `File too large`, `No reverse assignment found`, `Not in reverse recording phase`, `Round not found`, `ffmpeg failed`
 Response 401: `{ error: string }`
 Description: Accepts the player's imitation of the reversed audio. Looks up which original track this player is assigned to reverse (via `reverse_player_id` in `round_player_tracks`), stores the imitation at `reverse-recording/{roundId}/{playerId}.webm`, reverses it again via FFmpeg to produce the final garbled audio, stores it at `final-audio/{roundId}/{playerId}.webm`, and updates the original owner's track row to `final_audio_ready`.
-Emits `REVERSE_RECORDING_UPLOADED` to the room. If all players are done, updates the round phase to `guessing` in PostgreSQL and emits `GUESSING_STARTED`.
+Emits `reverse_recording_uploaded` to the room. If all players are done, updates the round phase to `guessing` (setting `guessing_started_at = NOW()`) in PostgreSQL and emits `guessing_started`.
 
 ---
 
@@ -139,21 +140,36 @@ Auth: `X-Player-Token` header (or `?token=` query param)
 Path params: `roundId` (uuid)
 Body: `{ guesses: [{ clueIndex: number, title: string, artist: string, notes?: string }] }`
 Response 200: `{ ok: true, submittedCount: number, totalPlayers: number }`
-Response 400: `{ error: string }` — e.g. `Guesses array required`, `Round not found`, `Not in guessing phase`, `Already submitted`
+Response 400: `{ error: string }` — e.g. `Guesses array required`, `Not in guessing phase`, `Already submitted`
 Response 401: `{ error: string }`
+Response 404: `{ error: "Round not found" }`
 Response 500: `{ error: "Failed to submit guess" }`
-Description: Records the player's guesses for all clues in the round. The round must be in `guessing` phase. Each player may only submit once (idempotent guard on `player_guesses` table). Guesses are stored as JSONB. When all players have submitted, updates the round phase to `scores_fetching` and emits `GUESSING_ENDED` to the room.
+Description: Records the player's guesses for all clues in the round. The round must be in `guessing` phase. Each player may only submit once. Guesses are stored as JSONB. Emits `guess_submitted` to the room after every submission. When all players have submitted, updates the round phase to `scores_fetching` and emits `guessing_ended` to the room.
+
+---
+
+### POST /api/rounds/:roundId/end-guessing
+Auth: `X-Player-Token` header (or `?token=` query param)
+Path params: `roundId` (uuid)
+Response 200: `{ ok: true, deadlineMs: number }`
+Response 400: `{ error: "Not in guessing phase" }`
+Response 401: `{ error: string }`
+Response 403: `{ error: "Not host" }`
+Response 404: `{ error: string }` — `Room not found` or `Round not found`
+Response 500: `{ error: string }`
+Description: Host-only action for public mode. Signals all players to submit their guesses immediately by emitting `guessing_submit_now` with a deadline 5 seconds from now. As a safety net, the server also schedules a 60-second timer: if the round is still in `guessing` phase when it fires, the server forcibly transitions to `scores_fetching` and emits `guessing_ended` itself.
+Socket.IO side-effect: emits `guessing_submit_now` to the room — see Socket.IO section.
 
 ---
 
 ### POST /api/rounds/:roundId/score
 Auth: `X-Player-Token` header (or `?token=` query param)
 Path params: `roundId` (uuid)
-Response 200: `{ ok: true, scores: [{ playerId: uuid, playerName: string, clueIndex: number, basePoints: number, speedBonus: number, artistBonus: number, total: number, aiScore: number, reasoning: string }] }`
+Response 200: `{ ok: true, scores: [{ playerId: uuid, playerName: string, clueIndex: number, songTitle: string, songArtist: string, basePoints: number, speedBonus: number, artistBonus: number, total: number, aiScore: number, reasoning: string }] }`
 Response 400: `{ error: string }` — `Round not found`, `Round already scored`, `No guesses submitted`
 Response 401: `{ error: string }`
 Response 500: `{ error: "Failed to calculate scores" }`
-Description: Triggers AI scoring of all guesses. Idempotent-guarded: returns 400 if `round_scores` already has entries for this round. Fetches all original songs and player guesses, calls `assessGuessesWithAI()` (OpenAI GPT-4 with Levenshtein fallback if the API key is absent or the call fails), computes `basePoints` (aiScore × 10), `speedBonus` (25 pts if < 30s, 15 pts if < 45s — currently hardcoded to 45s), and `artistBonus` (30 pts if artist similarity ≥ 0.8). Maximum 155 points per clue. Saves results to `round_scores`, updates round phase to `round_ended`, and emits `SCORES_FETCHING_ENDED` to the room.
+Description: Triggers AI scoring of all guesses. Atomically claims scoring rights by updating the round's phase from `scores_fetching` to `round_ended` in a single `UPDATE ... WHERE phase = scores_fetching` — only the first concurrent caller wins; subsequent callers get 400. Fetches all original songs and player guesses, calls `assessGuessesWithAI()` (OpenAI GPT-4 with Levenshtein fallback if the API key is absent or the call fails), computes `basePoints` (aiScore × 10), `speedBonus` (25 pts if < 30s, 15 pts if < 45s — measured from `guessing_started_at` to `submitted_at`), and `artistBonus` (30 pts if artist similarity ≥ 0.8). Maximum 155 points per clue. Saves results to `round_scores` and emits `scores_fetching_ended` to the room.
 Note: This endpoint is intended to be called by the client-side after the last guess is submitted, not automatically by the server.
 
 ---
@@ -169,6 +185,9 @@ Response 200:
       "clueIndex": 0,
       "correctTitle": "string",
       "correctArtist": "string",
+      "singerPlayerId": "uuid",
+      "singerPlayerName": "string",
+      "singerBonus": 39,
       "playerScores": [
         {
           "playerId": "uuid",
@@ -192,7 +211,33 @@ Response 200:
 ```
 Response 401: `{ error: string }`
 Response 500: `{ error: "Failed to fetch results" }`
-Description: Returns per-clue score breakdowns and an overall leaderboard sorted by total score descending. Joins `round_scores`, `players`, `round_player_tracks`, `songs`, and `player_guesses`. Clues are ordered by `clue_index`; players within each clue are ordered by `total_points DESC`.
+Description: Returns per-clue score breakdowns and an overall leaderboard sorted by total score descending. Each clue includes `singerPlayerId`, `singerPlayerName`, and `singerBonus` — the player who sang the reversed imitation earns a bonus equal to 30% of all points scored on that clue, which is also added to their leaderboard total. Joins `round_scores`, `players`, `round_player_tracks`, `songs`, and `player_guesses`. Clues are ordered by `clue_index`; players within each clue are ordered by `total_points DESC`.
+
+---
+
+### POST /api/rounds/:roundId/end
+Auth: `X-Player-Token` header (or `?token=` query param)
+Path params: `roundId` (uuid)
+Response 200: `{ ok: true }`
+Response 401: `{ error: string }`
+Response 403: `{ error: "Not host" }`
+Response 404: `{ error: "Room not found" }`
+Response 500: `{ error: string }`
+Description: Host-only action. Sets the round's phase to `round_ended` in PostgreSQL and emits `round_phase_changed` to the room. Use this when the game ends naturally without needing to clean up audio files.
+Socket.IO side-effect: emits `round_phase_changed` with `{ roundId, phase: "round_ended" }`.
+
+---
+
+### POST /api/rounds/:roundId/cleanup
+Auth: `X-Player-Token` header (or `?token=` query param)
+Path params: `roundId` (uuid)
+Response 200: `{ ok: true }`
+Response 401: `{ error: string }`
+Response 403: `{ error: "Not host" }`
+Response 404: `{ error: "Room not found" }`
+Response 500: `{ error: string }`
+Description: Host-only action. Same as `POST /api/rounds/:roundId/end` but also deletes all MinIO audio objects for the round (all files under `original/{roundId}/`, `reversed-original/{roundId}/`, `reverse-recording/{roundId}/`, and `final-audio/{roundId}/`). Emits `round_phase_changed` to the room.
+Socket.IO side-effect: emits `round_phase_changed` with `{ roundId, phase: "round_ended" }`.
 
 ---
 
@@ -240,14 +285,31 @@ Description: Streams the final garbled audio for guessing (the output of reversi
 The Socket.IO server is mounted on the same HTTP server as Fastify, with `cors: { origin: '*' }`.
 
 ### Event: join_room (client → server)
-Payload: `{ roomCode: string, playerId: uuid }`
+Payload: `{ roomCode: string, playerId: uuid, token: string }`
 Emits back (server → client):
 - `player_joined` → to all other sockets in the room: `{ playerId: uuid }`
 - `room_updated` → to all sockets in the room (including sender): full room state object
-- `game_started` → to sender only (if a round is already in progress): `{ roomCode: string, roundId: uuid, phase: string }`
+- `game_started` → to sender only (if a round is already in progress): `{ roomCode: string, roundId: uuid, phase: string, mode: string }`
 
-Description: Called by the client immediately after receiving credentials from `POST /api/rooms` or `POST /api/rooms/:code/join`. The server validates that the room exists and that the `playerId` is a registered member of it. Joins the socket to a Socket.IO room keyed by `roomCode`. Stores `{ roomCode, playerId }` in the in-memory `connections` map (keyed by `socket.id`). If a round is already running (reconnect scenario), re-emits `game_started` to the rejoining socket so it can restore its UI state.
-Note: `playerToken` is not validated in this event handler — only `playerId` membership in the room is checked.
+Description: Called by the client immediately after receiving credentials from `POST /api/rooms` or `POST /api/rooms/:code/join`. The server validates the token against Redis, confirming it matches both the claimed `playerId` and `roomCode`. Joins the socket to a Socket.IO room keyed by `roomCode`. Stores `{ roomCode, playerId }` in the in-memory `connections` map (keyed by `socket.id`). If a round is already running (reconnect scenario), re-emits `game_started` to the rejoining socket so it can restore its UI state.
+
+---
+
+### Event: host_song_changed (client → server)
+Payload: `{ roundId: uuid, clueIndex: number }`
+Emits back (server → client):
+- `host_song_changed` → to all sockets in the room: `{ roundId: uuid, clueIndex: number, totalClues: number }`
+
+Description: Host-only event for public mode. Host navigates to a different clue/song during the guessing phase. The server validates that the sender is the host of their room, queries the total number of clues with `final_path IS NOT NULL`, then broadcasts the updated index to all players.
+
+---
+
+### Event: host_audio_sync (client → server)
+Payload: `{ roundId: uuid, clueIndex: number, action: "play" | "pause", positionSeconds: number }`
+Emits back (server → client):
+- `host_audio_sync` → to all sockets in the room: same payload
+
+Description: Host-only event for public mode. Host plays or pauses the currently displayed clue's audio. The server validates the sender is the host and the action is one of `play` or `pause`, then rebroadcasts to all players so they can sync their playback state.
 
 ---
 
@@ -256,7 +318,7 @@ Payload: none (Socket.IO lifecycle event)
 Emits back:
 - `player_left` → to all other sockets in the room: `{ playerId: uuid }`
 
-Description: Fired automatically by Socket.IO when a socket disconnects. Removes the entry from the `connections` map and notifies remaining players. Does not invalidate the player's token (token invalidation is commented out).
+Description: Fired automatically by Socket.IO when a socket disconnects. Removes the entry from the `connections` map and notifies remaining players. Does not invalidate the player's token.
 
 ---
 
@@ -266,8 +328,8 @@ These events are emitted as side-effects of REST endpoint calls. Clients should 
 
 ### game_started
 Trigger: `POST /api/rooms/:code/start` succeeds, or on `join_room` if a round is in progress
-Payload: `{ roomCode: string, roundId: uuid, phase: "originals_recording" }`
-Description: Signals all players to enter the game screen and begin the originals recording phase.
+Payload: `{ roomCode: string, roundId: uuid, phase: "originals_recording", mode: string }`
+Description: Signals all players to enter the game screen and begin the originals recording phase. `mode` is either `"private"` or `"public"`.
 
 ---
 
@@ -299,8 +361,22 @@ Description: Signals the start of the guessing phase. All final audios are ready
 
 ---
 
+### guess_submitted
+Trigger: Any player submits guesses via `POST /api/rounds/:roundId/guess`
+Payload: `{ roundId: uuid, submittedCount: number, totalPlayers: number }`
+Description: Progress indicator emitted after every guess submission. Lets all players see how many have submitted so far.
+
+---
+
+### guessing_submit_now
+Trigger: Host calls `POST /api/rounds/:roundId/end-guessing`
+Payload: `{ roundId: uuid, deadlineMs: number }`
+Description: Public mode only. Signals players they must submit their guesses immediately. `deadlineMs` is a Unix timestamp (ms) 5 seconds in the future. Clients should auto-submit when the deadline passes.
+
+---
+
 ### guessing_ended
-Trigger: Last player submits their guesses via `POST /api/rounds/:roundId/guess`
+Trigger: Last player submits via `POST /api/rounds/:roundId/guess`, or the server safety-net timer fires after `POST /api/rounds/:roundId/end-guessing`
 Payload: `{ roundId: uuid, phase: "scores_fetching" }`
 Description: All guesses are in. The client that triggered this (i.e. the last submitter) should call `POST /api/rounds/:roundId/score` to kick off AI scoring.
 
@@ -308,8 +384,15 @@ Description: All guesses are in. The client that triggered this (i.e. the last s
 
 ### scores_fetching_ended
 Trigger: `POST /api/rounds/:roundId/score` completes successfully
-Payload: `{ roundId: uuid, scores: [{ playerId, playerName, clueIndex, basePoints, speedBonus, artistBonus, total, aiScore, reasoning }] }`
-Description: AI scoring is complete and the round is over (`round_ended` phase). Clients should transition to the results screen. Full results (with correct answers) are available via `GET /api/rounds/:roundId/results`.
+Payload: `{ roundId: uuid, scores: [{ playerId, playerName, clueIndex, songTitle, songArtist, basePoints, speedBonus, artistBonus, total, aiScore, reasoning }] }`
+Description: AI scoring is complete and the round is over (`round_ended` phase). Clients should transition to the results screen. Full results (with correct answers and singer bonuses) are available via `GET /api/rounds/:roundId/results`.
+
+---
+
+### round_phase_changed
+Trigger: `POST /api/rounds/:roundId/end` or `POST /api/rounds/:roundId/cleanup`
+Payload: `{ roundId: uuid, phase: string }`
+Description: Notifies all players of an explicit phase change made by the host. Currently only emitted with `phase: "round_ended"`.
 
 ---
 
@@ -346,6 +429,7 @@ For reference, the valid phase values (from `packages/shared/constants/index.js`
 | `ORIGINALS_RECORDING` | `originals_recording` | Players sing and upload originals |
 | `ORIGINAL_REVERSED_READY` | `originals_reversed_ready` | Per-player: original reversed by FFmpeg |
 | `REVERSED_RECORDING` | `reversed_recording` | Players imitate the reversed audio |
+| `PROCESSING_FINAL_AUDIO` | `processing_final_audio` | Per-player: FFmpeg reversing the imitation |
 | `FINAL_AUDIO_READY` | `final_audio_ready` | Per-player: reverse recording reversed again |
 | `GUESSING` | `guessing` | Players listen and guess song titles |
 | `SCORES_FETCHING` | `scores_fetching` | AI is scoring guesses |
