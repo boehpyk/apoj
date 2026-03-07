@@ -271,6 +271,10 @@ async function fetchRound() {
     }
 
     phase.value = data.phase || phase.value;
+    if (phase.value === ROUND_PHASES.ROUND_ENDED) {
+      router.replace(`/room/${roomCode}`);
+      return;
+    }
     gameMode.value = data.mode || gameMode.value;
     songMap.value = data.assignments || {};
     integrateRound(data);
@@ -394,6 +398,7 @@ onMounted(() => {
     return;
   }
   fetchRoom();
+  fetchRound();
   registerEvents();
 });
 
