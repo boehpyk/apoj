@@ -44,6 +44,7 @@ services:
       - OPENAI_MODEL=${OPENAI_MODEL}
       - OPENAI_TIMEOUT=${OPENAI_TIMEOUT}
       - LOG_LEVEL=${LOG_LEVEL}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
     ports:
       - '${BACKEND_PORT}:${BACKEND_PORT}'
       - '${DEBUG_PORT}:9229'
