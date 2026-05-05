@@ -5,25 +5,25 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    ports:
-      - '5432:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
   redis:
     image: redis:7
-    ports:
-      - '6379:6379'
+
   minio:
     image: minio/minio
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-      MINIO_BROWSER_REDIRECT_URL: https://apoj.samolit.com:9001
+      MINIO_BROWSER_REDIRECT_URL: http://apoj.samolit.com:9001
     command: server /data --console-address ":9001"
     ports:
-      - '${MINIO_PORT}:9000'
+      - '${MINIO_PORT}:9000'   # S3 API — needed for presigned URL access
+      - '9001:9001'             # MinIO console — HTTP-only, admin access
     volumes:
       - minio_data:/data
+
   backend:
     build:
       context: .
@@ -45,13 +45,11 @@ services:
       - OPENAI_TIMEOUT=${OPENAI_TIMEOUT}
       - LOG_LEVEL=${LOG_LEVEL}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
-    ports:
-      - '${BACKEND_PORT}:${BACKEND_PORT}'
-      - '${DEBUG_PORT}:9229'
     depends_on:
       - postgres
       - redis
       - minio
+
   frontend:
     image: node:20-alpine
     working_dir: /workspace/packages/frontend
@@ -62,23 +60,33 @@ services:
       - ./:/workspace
       - pnpm-store:/pnpm
     command: sh -c "corepack enable && pnpm install --filter frontend --ignore-scripts --no-frozen-lockfile && pnpm --filter frontend run build && pnpm --filter frontend run preview --host 0.0.0.0"
-    ports:
-      - '${FRONTEND_PORT}:5173'
     depends_on:
       - backend
+
   nginx:
     image: nginx:alpine
-    ports:
-      - '80:80'
-      - '443:443'
-      - '9001:9001'
+    container_name: apoj-nginx
     volumes:
       - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./docker/ssl:/etc/nginx/ssl:ro
-      - /etc/letsencrypt:/etc/letsencrypt:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.apoj.rule=Host(`apoj.samolit.com`)"
+      - "traefik.http.routers.apoj.entrypoints=websecure"
+      - "traefik.http.routers.apoj.tls.certresolver=le"
+      - "traefik.http.services.apoj.loadbalancer.server.port=80"
+    networks:
+      - default
+      - traefik
     depends_on:
       - backend
       - frontend
+    restart: unless-stopped
+
+networks:
+  default: {}
+  traefik:
+    external: true
+
 volumes:
   postgres_data:
   minio_data:
