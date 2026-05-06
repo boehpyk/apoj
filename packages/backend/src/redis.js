@@ -1,7 +1,11 @@
 import Redis from 'ioredis';
 
 // KISS: no config abstraction
-const redis = new Redis({ host: 'redis', port: 6379 });
+const redis = new Redis({
+  host: 'redis',
+  port: 6379,
+  ...(process.env.REDIS_PASSWORD ? { password: process.env.REDIS_PASSWORD } : {}),
+});
 
 export function getRedis() { return redis; }
 
