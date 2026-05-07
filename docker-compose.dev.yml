@@ -64,7 +64,7 @@ services:
       - redis
       - minio
   frontend:
-    image: node:20-alpine
+    image: node:22-alpine
     container_name: apoj_frontend_dev
     working_dir: /workspace/packages/frontend
     environment:
