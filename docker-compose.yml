@@ -72,7 +72,7 @@ services:
       - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.apoj.rule=Host(`apoj.samolit.com`)"
+      - "traefik.http.routers.apoj.rule=Host(`reverse.samolit.com`)"
       - "traefik.http.routers.apoj.entrypoints=websecure"
       - "traefik.http.routers.apoj.tls.certresolver=le"
       - "traefik.http.services.apoj.loadbalancer.server.port=80"

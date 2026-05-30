@@ -2,5 +2,147 @@
 @tailwind components;
 @tailwind utilities;
 
-body { font-family: system-ui, sans-serif; }
+/* ── Design tokens ───────────────────────────────────────── */
+:root {
+  --vr-bg:          #07020F;
+  --vr-stage-bg:    rgb(24, 10, 46);
+  --vr-panel:       rgb(14, 4, 32);
+  --vr-pink:        #FF2F87;
+  --vr-pink-dark:   #8E0F4A;
+  --vr-pink-glow:   rgba(255, 47, 135, 0.333);
+  --vr-gold:        #FFE066;
+  --vr-teal:        #3FD0C9;
+  --vr-cream:       #FFF5DC;
+  --vr-cream-dim:   rgba(255, 245, 220, 0.667);
+  --vr-cream-faint: rgba(255, 245, 220, 0.4);
+  --vr-border:      rgb(58, 27, 92);
+  --vr-orange:      #FF6B4A;
+  --vr-orange-glow: rgba(255, 107, 74, 0.333);
+  --vr-font-title:  "Monoton", "Bowlby One SC", Impact, sans-serif;
+  --vr-font-ui:     "Bowlby One SC", "Bowlby One", Impact, sans-serif;
+  --vr-font-body:   "Space Grotesk", system-ui, sans-serif;
+  --vr-font-mono:   "JetBrains Mono", "DM Mono", ui-monospace, monospace;
+}
 
+/* ── Global base ─────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0;
+  background: var(--vr-bg);
+  font-family: var(--vr-font-body);
+  color: var(--vr-cream);
+  height: 100%;
+  overflow: hidden;
+}
+
+#app { height: 100%; }
+
+/* ── Keyframes ───────────────────────────────────────────── */
+@keyframes vr-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%       { transform: scale(1.08); opacity: .85; }
+}
+@keyframes vr-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes vr-marquee-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: .45; }
+}
+@keyframes vr-wave-pulse {
+  0%, 100% { transform: scaleY(.4); }
+  50%       { transform: scaleY(1); }
+}
+@keyframes vr-float {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-6px); }
+}
+@keyframes vr-sparkle {
+  0%, 100% { opacity: .3; transform: scale(.8); }
+  50%       { opacity: 1;  transform: scale(1.1); }
+}
+@keyframes vr-glow {
+  0%, 100% { filter: brightness(1); }
+  50%       { filter: brightness(1.25); }
+}
+
+/* ── Reusable component classes ──────────────────────────── */
+.vr-btn-primary {
+  font-family: var(--vr-font-ui);
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  background: var(--vr-pink);
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  padding: 14px 24px;
+  font-size: 17px;
+  box-shadow: var(--vr-pink-dark) 0px 6px 0px, rgba(0,0,0,.25) 0px 10px 24px;
+  transform: translateY(0);
+  transition: transform 0.12s cubic-bezier(0.4,0,0.2,1), box-shadow 0.12s, filter 0.12s;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.vr-btn-primary:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: var(--vr-pink-dark) 0px 8px 0px, rgba(0,0,0,.3) 0px 14px 28px;
+  filter: brightness(1.1);
+}
+.vr-btn-primary:active:not(:disabled) {
+  transform: translateY(4px);
+  box-shadow: var(--vr-pink-dark) 0px 2px 0px, rgba(0,0,0,.2) 0px 4px 12px;
+}
+.vr-btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.vr-btn-secondary {
+  font-family: var(--vr-font-ui);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  background: transparent;
+  color: var(--vr-cream-dim);
+  border: none;
+  border-radius: 10px;
+  padding: 10px 22px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.vr-btn-secondary:hover {
+  color: var(--vr-cream);
+  background: rgba(255,255,255,.05);
+}
+
+.vr-input {
+  width: 100%;
+  padding: 14px 16px;
+  font-family: var(--vr-font-body);
+  font-size: 16px;
+  color: var(--vr-cream);
+  background: var(--vr-stage-bg);
+  border: 2px solid rgba(255, 47, 135, 0.333);
+  border-radius: 10px;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.vr-input::placeholder { color: rgba(255,245,220,.35); }
+.vr-input:focus {
+  border-color: var(--vr-pink);
+  box-shadow: 0 0 0 3px rgba(255,47,135,.18);
+}
+
+.vr-label {
+  display: block;
+  font-family: var(--vr-font-ui);
+  font-size: 11px;
+  color: var(--vr-pink);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}

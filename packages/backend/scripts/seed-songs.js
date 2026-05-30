@@ -25,7 +25,7 @@ async function seed() {
     values.push(`($${i*5+1}, $${i*5+2}, $${i*5+3}, $${i*5+4}, $${i*5+5})`);
     params.push(s.title, s.artist, s.midi, s.lyrics, s.duration);
   });
-  await query(`INSERT INTO songs (title, artist, midi_file_path, lyrics, duration) VALUES ${values.join(',')}`, params);
+  await query(`INSERT INTO songs (title, artist, audio_file_path, lyrics, duration) VALUES ${values.join(',')}`, params);
   console.log('[seed] inserted', songs.length, 'songs');
 }
 

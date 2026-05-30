@@ -1,72 +1,180 @@
 <template>
-  <div class="max-w-2xl mx-auto p-6 bg-white rounded shadow space-y-4">
+  <TheStage>
+    <div class="lobby-root">
 
-    <!-- Loading -->
-    <div v-if="viewMode === 'loading'" class="text-sm">Loading room...</div>
-
-    <!-- Guest join form -->
-    <div v-else-if="viewMode === 'join'" class="space-y-4">
-      <h2 class="text-xl font-semibold">Join Room {{ roomCode }}</h2>
-      <input v-model="joinName" placeholder="Your name" maxlength="30"
-             class="w-full border rounded px-3 py-2 text-sm" @keyup.enter="joinRoom" />
-      <p v-if="joinError" class="text-sm text-red-600">{{ joinError }}</p>
-      <button @click="joinRoom" :disabled="joinName.length < 3 || joining"
-              class="px-4 py-2 rounded text-white"
-              :class="joinName.length < 3 || joining ? 'bg-gray-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'">
-        {{ joining ? 'Joining...' : 'Join Game' }}
-      </button>
-    </div>
-
-    <!-- Unavailable -->
-    <div v-else-if="viewMode === 'unavailable'" class="space-y-3">
-      <h2 class="text-xl font-semibold">Room Unavailable</h2>
-      <p class="text-sm text-gray-600">This room is not available to join. The game may have already started or the room does not exist.</p>
-      <router-link to="/" class="text-sm text-indigo-600 hover:underline">Go Home</router-link>
-    </div>
-
-    <!-- Normal room view (authenticated player) -->
-    <div v-else-if="viewMode === 'room'" class="space-y-4">
-      <div class="flex items-center justify-between">
-        <h2 class="text-xl font-semibold">Room {{ roomCode }}</h2>
-        <button @click="copyCode" class="text-sm px-2 py-1 border rounded">Copy Room Link</button>
+      <!-- ── Loading ──────────────────────────────────────────────── -->
+      <div v-if="viewMode === 'loading'" class="state-center">
+        <span class="loading-text">Loading room…</span>
       </div>
-      <div v-if="error" class="text-sm text-red-600">{{ error }}</div>
-      <div v-else>
-        <h3 class="font-medium">Players ({{ players.length }})</h3>
-        <ul class="list-disc ml-5 space-y-1">
-          <li v-for="p in players" :key="p.id" :class="{'font-semibold': p.id === hostId}">{{ p.name }}<span v-if="p.id===hostId" class="text-xs text-gray-500"> (host)</span></li>
-        </ul>
-        <div class="pt-4" v-if="isHost">
-          <div class="mb-3 space-y-1">
-            <p class="text-sm font-medium text-gray-700">Guessing mode</p>
-            <label class="flex items-center gap-2 text-sm cursor-pointer">
-              <input type="radio" v-model="gameMode" value="public" />
-              <span><span class="font-medium">Party Mode</span> — host controls playback on shared screen</span>
-            </label>
-            <label class="flex items-center gap-2 text-sm cursor-pointer">
-              <input type="radio" v-model="gameMode" value="private" />
-              <span><span class="font-medium">Classic</span> — everyone guesses privately with a timer</span>
-            </label>
+
+      <!-- ── Unavailable ──────────────────────────────────────────── -->
+      <div v-else-if="viewMode === 'unavailable'" class="state-center">
+        <div class="unavail-card">
+          <p class="unavail-title">Room Unavailable</p>
+          <p class="unavail-body">
+            This room doesn't exist or the game has already started.
+          </p>
+          <router-link to="/" class="vr-btn-secondary unavail-link">← Go Home</router-link>
+        </div>
+      </div>
+
+      <!-- ── Join form ────────────────────────────────────────────── -->
+      <div v-else-if="viewMode === 'join'" class="state-center">
+        <div class="join-card">
+          <label class="vr-label">Join Room</label>
+          <p class="join-code">{{ roomCode }}</p>
+          <input
+            v-model="joinName"
+            class="vr-input"
+            placeholder="Your name"
+            maxlength="30"
+            @keyup.enter="joinRoom"
+          />
+          <p v-if="joinError" class="join-error">{{ joinError }}</p>
+          <button
+            class="vr-btn-primary join-btn"
+            :disabled="joinName.length < 3 || joining"
+            @click="joinRoom"
+          >{{ joining ? 'Joining…' : 'Join Game' }}</button>
+        </div>
+      </div>
+
+      <!-- ── Lobby (authenticated) ────────────────────────────────── -->
+      <div v-else-if="viewMode === 'room'" class="lobby-inner">
+
+        <!-- Header -->
+        <header class="lobby-header">
+          <div class="header-brand">
+            <svg viewBox="0 0 32 32" width="28" height="28" fill="none" class="header-logo-svg">
+              <circle cx="16" cy="16" r="15" stroke="#FFE066" stroke-width="1.5" opacity="0.6"/>
+              <circle cx="16" cy="16" r="9"  fill="#FF2F87" opacity="0.85"/>
+              <circle cx="16" cy="16" r="3"  fill="#07020F"/>
+              <circle cx="16" cy="16" r="13" fill="none" stroke="rgba(255,224,102,.3)" stroke-width="1"/>
+              <circle cx="16" cy="16" r="11" fill="none" stroke="rgba(255,224,102,.2)" stroke-width="1"/>
+            </svg>
+            <span class="header-title">VERSE REVERSE</span>
           </div>
-          <button @click="startGame" :disabled="players.length < 2 || starting" class="px-4 py-2 rounded text-white"
-                  :class="players.length < 2 || starting ? 'bg-gray-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'">
-            {{ starting ? 'Starting...' : 'Start Game' }}
-          </button>
-          <p class="text-xs text-gray-500 mt-1">Requires ≥2 players (≥3 recommended). Only host can start.</p>
-        </div>
-        <div class="pt-4" v-else>
-          <p class="text-xs text-gray-500">Waiting for host to start the game (needs ≥3 players).</p>
-        </div>
-      </div>
-      <div class="text-xs text-gray-400">Connection: {{ socketStatus }} · Player ID: {{ playerId }}</div>
-    </div>
+          <div class="header-room">
+            <span class="room-label">Room</span>
+            <span class="room-code">{{ roomCode }}</span>
+            <button class="vr-btn-secondary copy-btn" @click="copyCode">Copy Room Link</button>
+          </div>
+        </header>
 
-  </div>
+        <!-- Main grid -->
+        <main class="lobby-grid">
+
+          <!-- ── LEFT: The Green Room ──────────────────────────────── -->
+          <section class="col-stage">
+            <div class="stage-heading">
+              <span class="stage-title">THE GREEN ROOM</span>
+              <span class="stage-subtitle">waiting for the warm-up</span>
+            </div>
+
+            <div class="green-room">
+              <!-- Animated indicator dots -->
+              <div class="stage-dots">
+                <span
+                  v-for="i in 10"
+                  :key="i"
+                  class="stage-dot"
+                  :style="{ animationDelay: ((i - 1) * 0.08) + 's' }"
+                ></span>
+              </div>
+
+              <!-- On stage label -->
+              <div class="on-stage-label">♪ ON STAGE ♪</div>
+
+              <!-- Player list -->
+              <div class="player-list">
+                <div v-if="players.length === 0" class="empty-stage">
+                  Waiting for players…
+                </div>
+                <div
+                  v-for="p in players"
+                  :key="p.id"
+                  class="player-row"
+                  :class="{ 'player-you': p.id === playerId }"
+                >
+                  <span class="player-name">{{ p.name }}</span>
+                  <div class="player-badges">
+                    <span v-if="p.id === hostId" class="badge badge-host">HOST</span>
+                    <span v-if="p.id === playerId" class="badge badge-you">YOU</span>
+                  </div>
+                </div>
+                <div v-if="players.length === 1" class="need-more">
+                  Need at least one more player…
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ── RIGHT: Controls ───────────────────────────────────── -->
+          <section class="col-controls">
+
+            <!-- Game mode (host only) -->
+            <div v-if="isHost" class="mode-section">
+              <span class="vr-label">Guessing Mode</span>
+              <div class="mode-cards">
+                <div
+                  class="mode-card"
+                  :class="{ active: gameMode === 'public' }"
+                  @click="gameMode = 'public'"
+                >
+                  <div class="mode-card-title">Party Mode</div>
+                  <div class="mode-card-desc">Host controls playback on a shared screen</div>
+                </div>
+                <div
+                  class="mode-card"
+                  :class="{ active: gameMode === 'private' }"
+                  @click="gameMode = 'private'"
+                >
+                  <div class="mode-card-title">Classic</div>
+                  <div class="mode-card-desc">Everyone guesses privately with a timer</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Start / Wait area -->
+            <div class="start-area">
+              <template v-if="isHost">
+                <button
+                  class="start-btn"
+                  :class="{ disabled: players.length < 2 || starting }"
+                  :disabled="players.length < 2 || starting"
+                  @click="startGame"
+                >
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+                    <path d="M8 5v14l11-7z"/>
+                  </svg>
+                  {{ starting ? 'Starting…' : 'Start the Show' }}
+                </button>
+                <p v-if="startError" class="start-error">{{ startError }}</p>
+                <p class="start-hint">
+                  Only the host can start · need at least 2 (3+ is more fun)
+                </p>
+              </template>
+              <template v-else>
+                <p class="waiting-msg">Waiting for the host to start the show…</p>
+                <p class="start-hint">The host needs at least 2 players to begin.</p>
+              </template>
+            </div>
+
+
+          </section>
+
+        </main>
+      </div>
+
+    </div>
+  </TheStage>
 </template>
+
 <script setup>
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useSocket } from '../composables/useSocket.js';
+import TheStage from '@/components/ui/TheStage.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -74,16 +182,18 @@ const roomCode = route.params.code;
 const playerId = sessionStorage.getItem('playerId');
 const playerToken = sessionStorage.getItem('playerToken');
 
-const viewMode = ref('loading'); // 'loading' | 'join' | 'unavailable' | 'room'
-const joinName = ref('');
-const joining = ref(false);
-const joinError = ref(null);
-const error = ref(null);
-const players = ref([]);
-const hostId = ref(null);
-const roomStatus = ref(null);
-const starting = ref(false);
-const gameMode = ref('public');
+const viewMode      = ref('loading'); // 'loading' | 'join' | 'unavailable' | 'room'
+const joinName      = ref('');
+const joining       = ref(false);
+const joinError     = ref(null);
+const error         = ref(null);
+const players       = ref([]);
+const hostId        = ref(null);
+const roomStatus    = ref(null);
+const starting      = ref(false);
+const startError    = ref(null);
+const gameMode      = ref('public');
+
 const isHost = computed(() => hostId.value && playerId === hostId.value);
 const { socket, connected, events, off } = useSocket(roomCode, playerId);
 const socketStatus = computed(() => connected.value ? 'ws ok' : 'ws...');
@@ -91,15 +201,15 @@ const socketStatus = computed(() => connected.value ? 'ws ok' : 'ws...');
 // Store handler references for cleanup
 const handlers = {};
 
-async function fetchState(){
+async function fetchState() {
   try {
     const res = await fetch(`/api/rooms/${roomCode}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Failed');
-    players.value = data.players || [];
-    hostId.value = data.hostId;
+    players.value    = data.players || [];
+    hostId.value     = data.hostId;
     roomStatus.value = data.status;
-    error.value = null;
+    error.value      = null;
     return data;
   } catch (e) {
     error.value = e.message;
@@ -107,12 +217,12 @@ async function fetchState(){
   }
 }
 
-function copyCode(){
-  navigator.clipboard.writeText(window.location.href).catch(()=>{});
+function copyCode() {
+  navigator.clipboard.writeText(window.location.href).catch(() => {});
 }
 
 async function joinRoom() {
-  joining.value = true;
+  joining.value   = true;
   joinError.value = null;
   try {
     const res = await fetch(`/api/rooms/${roomCode}/join`, {
@@ -122,9 +232,9 @@ async function joinRoom() {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Failed to join');
-    sessionStorage.setItem('playerId', data.playerId);
+    sessionStorage.setItem('playerId',    data.playerId);
     sessionStorage.setItem('playerToken', data.playerToken);
-    sessionStorage.setItem('roomCode', data.roomCode);
+    sessionStorage.setItem('roomCode',    data.roomCode);
     window.location.reload();
   } catch (e) {
     joinError.value = e.message;
@@ -133,36 +243,34 @@ async function joinRoom() {
   }
 }
 
-function startGame(){
-  if (players.value.length < 2){
-    return;
-  }
+async function startGame() {
+  if (players.value.length < 2) return;
+  if (!isHost.value) return;
 
-  if (!isHost.value){
-    return;
-  }
-
-  starting.value = true;
-  fetch(`/api/rooms/${roomCode}/start`, {
-    method: 'POST',
-    headers: {
-      'x-player-token': playerToken,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ mode: gameMode.value })
-  }).then(r => r.json()).then(data => {
-    if (data.error) {
-      console.warn('[room] start error', data.error);
-    }
-  }).catch(err => console.error(err)).finally(() => {
+  starting.value  = true;
+  startError.value = null;
+  try {
+    const res  = await fetch(`/api/rooms/${roomCode}/start`, {
+      method: 'POST',
+      headers: {
+        'x-player-token': playerToken,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ mode: gameMode.value })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Server error ${res.status}`);
+  } catch (e) {
+    startError.value = e.message;
+  } finally {
     starting.value = false;
-  });
+  }
 }
 
-function applyRoomState(state){
+function applyRoomState(state) {
   if (!state) return;
   players.value = state.players || [];
-  hostId.value = state.hostId;
+  hostId.value  = state.hostId;
 }
 
 onMounted(async () => {
@@ -183,35 +291,485 @@ onMounted(async () => {
     return;
   }
 
-  // Socket events - store references for cleanup
-  handlers.roomUpdated = (state) => {
-    applyRoomState(state);
-  };
-  handlers.playerJoined = () => {
-    // Will get full state shortly via ROOM_UPDATED
-  };
-  handlers.playerLeft = () => {
-    // Could trigger state refresh later
-  };
-  handlers.gameStarted = (payload) => {
-    router.push(`/game/${roomCode}`);
-  };
+  handlers.roomUpdated = (state) => { applyRoomState(state); };
+  handlers.playerJoined = () => {};
+  handlers.playerLeft   = () => {};
+  handlers.gameStarted  = () => { router.push(`/game/${roomCode}`); };
 
-  socket.value?.on?.(events.ROOM_UPDATED, handlers.roomUpdated);
+  socket.value?.on?.(events.ROOM_UPDATED,  handlers.roomUpdated);
   socket.value?.on?.(events.PLAYER_JOINED, handlers.playerJoined);
-  socket.value?.on?.(events.PLAYER_LEFT, handlers.playerLeft);
-  socket.value?.on?.(events.GAME_STARTED, handlers.gameStarted);
+  socket.value?.on?.(events.PLAYER_LEFT,   handlers.playerLeft);
+  socket.value?.on?.(events.GAME_STARTED,  handlers.gameStarted);
 });
 
 onBeforeUnmount(() => {
-  // Clean up event listeners to prevent memory leaks
   if (socket.value) {
-    socket.value.off(events.ROOM_UPDATED, handlers.roomUpdated);
+    socket.value.off(events.ROOM_UPDATED,  handlers.roomUpdated);
     socket.value.off(events.PLAYER_JOINED, handlers.playerJoined);
-    socket.value.off(events.PLAYER_LEFT, handlers.playerLeft);
-    socket.value.off(events.GAME_STARTED, handlers.gameStarted);
+    socket.value.off(events.PLAYER_LEFT,   handlers.playerLeft);
+    socket.value.off(events.GAME_STARTED,  handlers.gameStarted);
   }
 });
 </script>
+
 <style scoped>
+/* ── Root ────────────────────────────────────────────────────────── */
+.lobby-root {
+  position: absolute;
+  inset: 0;
+  padding-bottom: 56px; /* clear TheStage status bar */
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Loading / unavailable / join centered states ────────────────── */
+.state-center {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.loading-text {
+  font-family: var(--vr-font-mono);
+  font-size: 14px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--vr-cream-dim);
+  animation: vr-pulse 2s ease infinite;
+}
+
+/* Unavailable card */
+.unavail-card {
+  background: var(--vr-panel);
+  border: 1.5px solid var(--vr-border);
+  border-radius: 20px;
+  padding: 40px 48px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  max-width: 420px;
+}
+
+.unavail-title {
+  font-family: var(--vr-font-ui);
+  font-size: 24px;
+  letter-spacing: 0.5px;
+  color: var(--vr-pink);
+}
+
+.unavail-body {
+  font-size: 14px;
+  color: var(--vr-cream-dim);
+  line-height: 1.6;
+}
+
+.unavail-link {
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+/* Join card */
+.join-card {
+  background: var(--vr-panel);
+  border: 1.5px solid var(--vr-border);
+  border-radius: 20px;
+  padding: 40px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 360px;
+  max-width: 460px;
+}
+
+.join-code {
+  font-family: var(--vr-font-mono);
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  color: var(--vr-gold);
+  text-shadow: 0 0 12px rgba(255,224,102,.5);
+  margin: -4px 0 4px;
+}
+
+.join-error {
+  font-size: 13px;
+  color: var(--vr-pink);
+  margin: -4px 0;
+}
+
+.join-btn {
+  width: 100%;
+  justify-content: center;
+}
+
+/* ── Lobby inner (authenticated) ─────────────────────────────────── */
+.lobby-inner {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Header */
+.lobby-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 32px;
+  height: 68px;
+  flex-shrink: 0;
+  background: linear-gradient(180deg, rgb(14,4,32) 0%, rgb(24,10,46) 100%);
+  border-bottom: 2px solid rgb(58,27,92);
+  position: relative;
+  z-index: 2;
+}
+
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-logo-svg {
+  flex-shrink: 0;
+}
+
+.header-title {
+  font-family: var(--vr-font-title);
+  font-size: 22px;
+  letter-spacing: 2px;
+  color: var(--vr-gold);
+  text-shadow:
+    0 0 4px  var(--vr-gold),
+    0 0 14px #FFC400,
+    0 0 28px #FF8A00,
+    0 0 60px rgba(255,196,0,.55);
+}
+
+.header-room {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.room-label {
+  font-family: var(--vr-font-mono);
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--vr-cream-faint);
+}
+
+.room-code {
+  font-family: var(--vr-font-mono);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: var(--vr-gold);
+  text-shadow: 0 0 10px rgba(255,224,102,.5);
+  padding: 4px 14px;
+  background: rgba(255,224,102,.08);
+  border: 1.5px solid rgba(255,224,102,.3);
+  border-radius: 8px;
+}
+
+.copy-btn {
+  font-size: 12px;
+  padding: 6px 16px;
+}
+
+/* Main grid */
+.lobby-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 32px;
+  padding: 24px 32px 16px;
+  overflow: hidden;
+}
+
+/* ── Left column ─────────────────────────────────────────────────── */
+.col-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.stage-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.stage-title {
+  font-family: var(--vr-font-ui);
+  font-size: 13px;
+  letter-spacing: 2px;
+  color: var(--vr-cream);
+}
+
+.stage-subtitle {
+  font-size: 12px;
+  color: var(--vr-cream-faint);
+  font-style: italic;
+}
+
+/* Gold-bordered stage box */
+.green-room {
+  flex: 1;
+  background: rgb(36,18,71);
+  border: 4px solid var(--vr-gold);
+  border-radius: 28px;
+  box-shadow:
+    0 0 0 1px rgba(255,224,102,.12),
+    0 0 32px rgba(255,224,102,.12),
+    0 0 64px rgba(255,224,102,.06),
+    inset 0 0 40px rgba(58,27,92,.6);
+  padding: 22px 26px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow: hidden;
+}
+
+/* Indicator dots */
+.stage-dots {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.stage-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--vr-gold);
+  box-shadow: 0 0 8px var(--vr-gold), 0 0 16px rgba(255,224,102,.4);
+  animation: vr-marquee-blink 1.6s ease infinite;
+}
+
+/* On Stage label */
+.on-stage-label {
+  text-align: center;
+  font-family: var(--vr-font-ui);
+  font-size: 18px;
+  letter-spacing: 2px;
+  color: var(--vr-teal);
+  text-shadow: 0 0 12px rgba(63,208,201,.5);
+}
+
+/* Player list */
+.player-list {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.empty-stage,
+.need-more {
+  font-size: 13px;
+  color: var(--vr-cream-faint);
+  font-style: italic;
+  text-align: center;
+  padding: 8px 0;
+}
+
+.need-more {
+  margin-top: 4px;
+}
+
+.player-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: rgba(24,10,46,.7);
+  border: 1.5px solid rgba(58,27,92,.8);
+  border-radius: 12px;
+  transition: border-color 0.15s;
+}
+
+.player-row.player-you {
+  border-color: rgba(255,224,102,.35);
+  background: rgba(255,224,102,.06);
+}
+
+.player-name {
+  font-family: var(--vr-font-ui);
+  font-size: 15px;
+  letter-spacing: 0.5px;
+  color: var(--vr-cream);
+}
+
+.player-badges {
+  display: flex;
+  gap: 6px;
+}
+
+.badge {
+  font-family: var(--vr-font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+.badge-host {
+  background: rgba(255,47,135,.15);
+  border: 1px solid rgba(255,47,135,.5);
+  color: var(--vr-pink);
+}
+
+.badge-you {
+  background: rgba(255,224,102,.12);
+  border: 1px solid rgba(255,224,102,.4);
+  color: var(--vr-gold);
+}
+
+/* ── Right column ────────────────────────────────────────────────── */
+.col-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-top: 4px;
+}
+
+/* Mode cards */
+.mode-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mode-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mode-card {
+  padding: 12px 16px;
+  border-radius: 14px;
+  border: 1.5px solid var(--vr-border);
+  background: var(--vr-panel);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.mode-card:hover {
+  border-color: rgba(255,224,102,.3);
+}
+
+.mode-card.active {
+  border-color: var(--vr-gold);
+  background: rgba(255,224,102,.08);
+}
+
+.mode-card-title {
+  font-family: var(--vr-font-ui);
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  color: var(--vr-cream);
+  margin-bottom: 3px;
+}
+
+.mode-card.active .mode-card-title {
+  color: var(--vr-gold);
+}
+
+.mode-card-desc {
+  font-size: 12px;
+  color: var(--vr-cream-faint);
+  line-height: 1.4;
+}
+
+/* Start area */
+.start-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+.start-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--vr-font-ui);
+  font-size: 22px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: rgb(14,4,32);
+  background: var(--vr-gold);
+  border: none;
+  border-radius: 20px;
+  padding: 22px 40px;
+  cursor: pointer;
+  box-shadow:
+    rgb(181,136,0) 0 6px 0,
+    rgba(0,0,0,.25) 0 10px 24px;
+  transition: transform 0.12s cubic-bezier(0.4,0,0.2,1),
+              box-shadow 0.12s,
+              filter 0.12s;
+  width: 100%;
+  justify-content: center;
+}
+
+.start-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow:
+    rgb(181,136,0) 0 8px 0,
+    rgba(0,0,0,.3) 0 14px 28px;
+  filter: brightness(1.08);
+}
+
+.start-btn:active:not(:disabled) {
+  transform: translateY(4px);
+  box-shadow:
+    rgb(181,136,0) 0 2px 0,
+    rgba(0,0,0,.2) 0 4px 12px;
+}
+
+.start-btn.disabled,
+.start-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.start-error {
+  font-family: var(--vr-font-mono);
+  font-size: 12px;
+  color: var(--vr-pink);
+  text-align: center;
+  max-width: 280px;
+  line-height: 1.4;
+}
+
+.start-hint {
+  font-size: 12px;
+  color: rgba(255,245,220,.4);
+  text-align: center;
+  line-height: 1.5;
+  max-width: 260px;
+}
+
+.waiting-msg {
+  font-family: var(--vr-font-ui);
+  font-size: 16px;
+  letter-spacing: 0.5px;
+  color: var(--vr-cream-dim);
+  text-align: center;
+}
+
 </style>

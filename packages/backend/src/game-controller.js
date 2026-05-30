@@ -89,7 +89,7 @@ export async function getAssignedOriginalSong(ctx) {
     }
 
     const songId = trackRes.rows[0].song_id;
-    const songRes = await query('SELECT id, title, lyrics, duration, audio_file_path FROM songs WHERE id = $1', [songId]);
+    const songRes = await query('SELECT id, title, artist, lyrics, duration, audio_file_path FROM songs WHERE id = $1', [songId]);
     if (!songRes.rows.length) {
         throw new Error('Song not found');
     }

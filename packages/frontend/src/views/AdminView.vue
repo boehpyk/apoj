@@ -1,5 +1,5 @@
 <template>
-    <div class="max-w-3xl mx-auto p-6 space-y-6">
+    <div class="max-w-3xl mx-auto p-6 space-y-6 admin-scroll-root">
 
         <!-- Login form -->
         <div v-if="!isAuthenticated" class="bg-white rounded shadow p-6 space-y-4">
@@ -8,7 +8,7 @@
                 v-model="passwordInput"
                 type="password"
                 placeholder="Admin password"
-                class="w-full border rounded px-3 py-2 text-sm"
+                class="w-full border rounded px-3 py-2 text-sm text-gray-900"
                 @keyup.enter="handleLogin"
             />
             <p v-if="loginError" class="text-sm text-red-600">{{ loginError }}</p>
@@ -31,16 +31,16 @@
             <!-- Upload form -->
             <div class="bg-white rounded shadow p-6 space-y-4">
                 <h3 class="font-medium">Add New Song</h3>
-                <input v-model="form.title" placeholder="Title *" class="w-full border rounded px-3 py-2 text-sm" />
-                <input v-model="form.artist" placeholder="Artist *" class="w-full border rounded px-3 py-2 text-sm" />
-                <input v-model="form.description" placeholder="Description (optional)" class="w-full border rounded px-3 py-2 text-sm" />
+                <input v-model="form.title" placeholder="Title *" class="w-full border rounded px-3 py-2 text-sm text-gray-900" />
+                <input v-model="form.artist" placeholder="Artist *" class="w-full border rounded px-3 py-2 text-sm text-gray-900" />
+                <input v-model="form.description" placeholder="Description (optional)" class="w-full border rounded px-3 py-2 text-sm text-gray-900" />
                 <textarea
                     v-model="form.lyrics"
                     placeholder="Lyrics (optional)"
                     rows="6"
-                    class="w-full border rounded px-3 py-2 text-sm font-mono resize-y"
+                    class="w-full border rounded px-3 py-2 text-sm font-mono resize-y text-gray-900"
                 />
-                <input v-model="form.tags" placeholder="Tags (comma-separated, e.g. pop,80s,rock)" class="w-full border rounded px-3 py-2 text-sm" />
+                <input v-model="form.tags" placeholder="Tags (comma-separated, e.g. pop,80s,rock)" class="w-full border rounded px-3 py-2 text-sm text-gray-900" />
                 <div>
                     <label class="text-sm font-medium text-gray-700">MP3 File *</label>
                     <input type="file" accept="audio/mpeg,audio/mp3,.mp3" @change="handleFileSelect" class="mt-1 block text-sm" />
@@ -68,7 +68,7 @@
                         v-model="filterText"
                         type="text"
                         placeholder="Filter by title..."
-                        class="w-full border rounded px-3 py-2 text-sm"
+                        class="w-full border rounded px-3 py-2 text-sm text-gray-900"
                     />
                     <div v-if="allTags.length" class="flex gap-1.5 flex-wrap">
                         <button
@@ -277,3 +277,25 @@ onMounted(() => {
     if (isAuthenticated.value) loadSongs();
 });
 </script>
+
+<style scoped>
+/*
+  html/body have overflow:hidden for the game views.
+  The admin page needs normal document scrolling, so we make
+  its root fill the viewport and scroll independently.
+*/
+.admin-scroll-root {
+  position: fixed;
+  inset: 0;
+  overflow-y: auto;
+  max-width: none;
+  padding: 24px;
+}
+
+/* Re-apply the max-width centering inside the scrollable container */
+.admin-scroll-root > * {
+  max-width: 48rem; /* 3xl */
+  margin-left: auto;
+  margin-right: auto;
+}
+</style>

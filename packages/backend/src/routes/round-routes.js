@@ -140,6 +140,8 @@ async function computeAndSaveScore(roundId, assessment, playerGuess, original, g
         clueIndex: assessment.clueIndex,
         songTitle: original.title,
         songArtist: original.artist,
+        guessTitle: guess.title || '',
+        guessArtist: guess.artist || '',
         ...scoreBreakdown,
         aiScore: assessment.aiScore,
         reasoning: assessment.reasoning
@@ -488,8 +490,8 @@ export function registerRoundRoutes(fastify, getIo) {
         const { roundId } = req.params;
         const { guesses } = req.body || {};
 
-        if (!Array.isArray(guesses) || guesses.length === 0) {
-            return reply.code(400).send({ error: 'Guesses array required' });
+        if (!Array.isArray(guesses)) {
+            return reply.code(400).send({ error: 'Guesses must be an array' });
         }
 
         try {
@@ -656,6 +658,38 @@ export function registerRoundRoutes(fastify, getIo) {
 
                 const result = await computeAndSaveScore(roundId, assessment, playerGuess, original, guessingStartedAt);
                 if (result) scoreResults.push(result);
+            }
+
+            // Pad with zero-score entries for (player, clue) pairs where no guess was submitted,
+            // so every song card shows all players in the results breakdown.
+            const allPlayersRes = await query(
+                `SELECT rpt.player_id, p.name AS player_name
+                 FROM round_player_tracks rpt
+                 JOIN players p ON rpt.player_id = p.id
+                 WHERE rpt.round_id = $1`,
+                [roundId]
+            );
+            const scored = new Set(scoreResults.map(s => `${s.playerId}:${s.clueIndex}`));
+            for (const row of allPlayersRes.rows) {
+                for (const song of originalSongs) {
+                    if (!scored.has(`${row.player_id}:${song.clueIndex}`)) {
+                        scoreResults.push({
+                            playerId: row.player_id,
+                            playerName: row.player_name,
+                            clueIndex: song.clueIndex,
+                            songTitle: song.title,
+                            songArtist: song.artist,
+                            guessTitle: '',
+                            guessArtist: '',
+                            basePoints: 0,
+                            speedBonus: 0,
+                            artistBonus: 0,
+                            total: 0,
+                            aiScore: 0,
+                            reasoning: 'No guess submitted',
+                        });
+                    }
+                }
             }
 
             // Emit scores to room
