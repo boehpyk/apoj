@@ -397,7 +397,7 @@ async function onJoin() {
 .htp-trigger {
   position: absolute;
   bottom: 50px;
-  right: 24px;
+  left: 24px;
   display: inline-flex;
   align-items: center;
   gap: 7px;

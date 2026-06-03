@@ -661,6 +661,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  margin-bottom: 70px;
 }
 
 .bd-header {

@@ -238,7 +238,7 @@ const hostId        = ref(null);
 const roomStatus    = ref(null);
 const starting      = ref(false);
 const startError    = ref(null);
-const gameMode      = ref('public');
+const gameMode      = ref('private');
 
 const isHost = computed(() => hostId.value && playerId === hostId.value);
 const { socket, connected, events, off } = useSocket(roomCode, playerId);

@@ -730,7 +730,7 @@ const shortId   = (id) => id ? id.slice(0, 7) : '…';
   padding: 20px 20px 18px;
   display: flex;
   flex-direction: column;
-  height: 100%;
+  height: 88%;
   box-sizing: border-box;
 }
 

@@ -208,7 +208,7 @@ onBeforeUnmount(() => {
 .feedback-trigger {
   position: absolute;
   bottom: 50px;
-  left: 24px;
+  right: 24px;
   display: inline-flex;
   align-items: center;
   gap: 7px;
