@@ -118,6 +118,15 @@ async function migrate() {
     PRIMARY KEY (song_id, tag_id)
   )`);
 
+  // Feedback
+  await query(`CREATE TABLE IF NOT EXISTS feedback (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    message TEXT NOT NULL,
+    type VARCHAR(20) DEFAULT 'other',
+    page VARCHAR(100),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )`);
+
   console.log('[migrate] completed');
 }
 

@@ -135,6 +135,51 @@
               </div>
             </div>
 
+            <!-- Mic check -->
+            <div class="mic-check-section">
+              <button v-if="micCheckState === 'idle'" class="mic-check-toggle" @click="startMicCheck">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
+                  <path d="M12 14a3 3 0 003-3V5a3 3 0 00-6 0v6a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 0014 0h-2z"/>
+                </svg>
+                Check your microphone
+              </button>
+              <div v-else class="mic-check-panel">
+                <div class="mic-check-header">
+                  <span class="mic-check-label">Mic Check</span>
+                  <button class="mic-check-close" @click="closeMicCheck">✕</button>
+                </div>
+                <template v-if="micCheckState === 'recording'">
+                  <div class="mic-check-waveform">
+                    <div
+                      v-for="(h, i) in micWaveHeights"
+                      :key="i"
+                      class="wbar wbar--live"
+                      :style="{ animationDelay: (i * 0.04) + 's' }"
+                    ></div>
+                  </div>
+                  <div class="mic-rec-row">
+                    <span class="mic-rec-dot">●</span>
+                    <span class="mic-timer">{{ micTimeLabel }}</span>
+                    <button class="mic-stop-btn" @click="stopMicCheck">■ Stop</button>
+                  </div>
+                </template>
+                <template v-if="micCheckState === 'playback'">
+                  <audio
+                    ref="micCheckAudioEl"
+                    :src="micCheckBlobUrl || undefined"
+                    style="display:none"
+                    @ended="micCheckIsPlaying = false"
+                  />
+                  <div class="mic-playback-row">
+                    <button class="mic-play-btn" @click="toggleMicPlayback">
+                      {{ micCheckIsPlaying ? '⏸ Pause' : '▶ Play back' }}
+                    </button>
+                    <button class="mic-retry-btn" @click="retryMicCheck">↺ Again</button>
+                  </div>
+                </template>
+              </div>
+            </div>
+
             <!-- Start / Wait area -->
             <div class="start-area">
               <template v-if="isHost">
@@ -174,6 +219,7 @@
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useSocket } from '../composables/useSocket.js';
+import { useAudioRecorder } from '../composables/useAudioRecorder.js';
 import TheStage from '@/components/ui/TheStage.vue';
 
 const route = useRoute();
@@ -197,6 +243,75 @@ const gameMode      = ref('public');
 const isHost = computed(() => hostId.value && playerId === hostId.value);
 const { socket, connected, events, off } = useSocket(roomCode, playerId);
 const socketStatus = computed(() => connected.value ? 'ws ok' : 'ws...');
+
+// ── Mic check ────────────────────────────────────────────────────────
+const { isRecording: micIsRecording, start: micRecStart, stop: micRecStop } = useAudioRecorder();
+const micCheckState     = ref('idle'); // 'idle' | 'recording' | 'playback'
+const micCheckBlobUrl   = ref(null);
+const micCheckAudioEl   = ref(null);
+const micCheckIsPlaying = ref(false);
+const micCheckSeconds   = ref(0);
+let   micTimerInterval  = null;
+
+const micTimeLabel = computed(() => {
+  const s = micCheckSeconds.value;
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+});
+
+const micWaveHeights = [
+  27, 34, 55, 42, 62, 48, 71, 55, 39, 77, 64,
+  52, 83, 61, 74, 58, 82, 69, 91, 64, 45, 58, 76,
+];
+
+async function startMicCheck() {
+  await micRecStart();
+  micCheckSeconds.value = 0;
+  micTimerInterval = setInterval(() => micCheckSeconds.value++, 1000);
+  micCheckState.value = 'recording';
+}
+
+async function stopMicCheck() {
+  clearInterval(micTimerInterval);
+  micTimerInterval = null;
+  const blob = await micRecStop();
+  if (micCheckBlobUrl.value) URL.revokeObjectURL(micCheckBlobUrl.value);
+  micCheckBlobUrl.value   = URL.createObjectURL(blob);
+  micCheckIsPlaying.value = false;
+  micCheckState.value     = 'playback';
+}
+
+function toggleMicPlayback() {
+  const el = micCheckAudioEl.value;
+  if (!el) return;
+  if (micCheckIsPlaying.value) {
+    el.pause();
+    micCheckIsPlaying.value = false;
+  } else {
+    el.play();
+    micCheckIsPlaying.value = true;
+  }
+}
+
+async function retryMicCheck() {
+  if (micCheckBlobUrl.value) {
+    URL.revokeObjectURL(micCheckBlobUrl.value);
+    micCheckBlobUrl.value = null;
+  }
+  micCheckIsPlaying.value = false;
+  await startMicCheck();
+}
+
+function closeMicCheck() {
+  if (micIsRecording.value) micRecStop();
+  clearInterval(micTimerInterval);
+  micTimerInterval = null;
+  if (micCheckBlobUrl.value) {
+    URL.revokeObjectURL(micCheckBlobUrl.value);
+    micCheckBlobUrl.value = null;
+  }
+  micCheckIsPlaying.value = false;
+  micCheckState.value     = 'idle';
+}
 
 // Store handler references for cleanup
 const handlers = {};
@@ -303,6 +418,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  closeMicCheck();
   if (socket.value) {
     socket.value.off(events.ROOM_UPDATED,  handlers.roomUpdated);
     socket.value.off(events.PLAYER_JOINED, handlers.playerJoined);
@@ -770,6 +886,153 @@ onBeforeUnmount(() => {
   letter-spacing: 0.5px;
   color: var(--vr-cream-dim);
   text-align: center;
+}
+
+/* ── Mic check ───────────────────────────────────────────────────── */
+.mic-check-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 16px;
+  background: var(--vr-panel);
+  border: 1.5px solid var(--vr-border);
+  border-radius: 14px;
+  font-family: var(--vr-font-ui);
+  font-size: 13px;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.mic-check-toggle:hover {
+  border-color: rgba(63,208,201,.4);
+  color: var(--vr-teal);
+}
+
+.mic-check-panel {
+  background: var(--vr-panel);
+  border: 1.5px solid rgba(63,208,201,.3);
+  border-radius: 14px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mic-check-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.mic-check-label {
+  font-family: var(--vr-font-mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--vr-teal);
+}
+
+.mic-check-close {
+  background: none;
+  border: none;
+  color: var(--vr-cream-faint);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+  transition: color 0.12s;
+}
+
+.mic-check-close:hover { color: var(--vr-cream); }
+
+.mic-check-waveform {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.mic-check-waveform .wbar {
+  flex: 1 1 0;
+  background: var(--vr-teal);
+  border-radius: 3px;
+  box-shadow: rgba(63,208,201,.5) 0 0 5px;
+  min-height: 4px;
+  transform-origin: 50% 50%;
+}
+
+.mic-rec-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mic-rec-dot {
+  color: var(--vr-pink);
+  font-size: 10px;
+  animation: vr-pulse 1s ease infinite;
+}
+
+.mic-timer {
+  font-family: var(--vr-font-mono);
+  font-size: 14px;
+  color: var(--vr-cream-dim);
+  flex: 1;
+}
+
+.mic-stop-btn {
+  font-family: var(--vr-font-mono);
+  font-size: 11px;
+  letter-spacing: 1px;
+  padding: 7px 16px;
+  background: rgba(255,47,135,.12);
+  border: 1.5px solid rgba(255,47,135,.4);
+  border-radius: 10px;
+  color: var(--vr-pink);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.mic-stop-btn:hover { background: rgba(255,47,135,.22); }
+
+.mic-playback-row {
+  display: flex;
+  gap: 8px;
+}
+
+.mic-play-btn {
+  flex: 1;
+  font-family: var(--vr-font-ui);
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  padding: 10px 14px;
+  background: rgba(63,208,201,.12);
+  border: 1.5px solid rgba(63,208,201,.4);
+  border-radius: 10px;
+  color: var(--vr-teal);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.mic-play-btn:hover { background: rgba(63,208,201,.22); }
+
+.mic-retry-btn {
+  font-family: var(--vr-font-ui);
+  font-size: 12px;
+  padding: 10px 14px;
+  background: var(--vr-panel);
+  border: 1.5px solid var(--vr-border);
+  border-radius: 10px;
+  color: var(--vr-cream-faint);
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+
+.mic-retry-btn:hover {
+  color: var(--vr-cream);
+  border-color: rgba(255,255,255,.25);
 }
 
 </style>

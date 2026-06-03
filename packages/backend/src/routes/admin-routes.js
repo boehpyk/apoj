@@ -185,6 +185,25 @@ export function registerAdminRoutes(fastify) {
         reply.code(201).send(songRes.rows[0]);
     });
 
+    fastify.get('/api/admin/feedback', async (req, reply) => {
+        if (!verifyAdminAuth(req, reply)) return;
+        const res = await query(
+            `SELECT id, message, type, page, created_at
+             FROM feedback
+             ORDER BY created_at DESC
+             LIMIT 500`
+        );
+        reply.send(res.rows);
+    });
+
+    fastify.delete('/api/admin/feedback/:id', async (req, reply) => {
+        if (!verifyAdminAuth(req, reply)) return;
+        const { id } = req.params;
+        const res = await query('DELETE FROM feedback WHERE id = $1 RETURNING id', [id]);
+        if (!res.rows.length) return reply.code(404).send({ error: 'Not found' });
+        reply.send({ ok: true });
+    });
+
     fastify.delete('/api/admin/songs/:id', async (req, reply) => {
         if (!verifyAdminAuth(req, reply)) return;
 

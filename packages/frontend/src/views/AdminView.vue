@@ -24,9 +24,60 @@
         <!-- Admin panel -->
         <div v-else class="space-y-6">
             <div class="flex justify-between items-center">
-                <h2 class="text-xl font-semibold">Song Management</h2>
+                <div class="flex gap-2">
+                    <button
+                        @click="activeTab = 'songs'"
+                        :class="['px-4 py-2 rounded text-sm font-medium transition-colors', activeTab === 'songs' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50 border']"
+                    >Songs</button>
+                    <button
+                        @click="activeTab = 'feedback'; loadFeedback()"
+                        :class="['px-4 py-2 rounded text-sm font-medium transition-colors', activeTab === 'feedback' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50 border']"
+                    >
+                        Feedback
+                        <span v-if="feedback.length" class="ml-1.5 bg-white text-indigo-600 text-xs font-bold px-1.5 py-0.5 rounded-full">{{ feedback.length }}</span>
+                    </button>
+                </div>
                 <button @click="logout" class="text-sm text-gray-500 hover:underline">Logout</button>
             </div>
+
+            <!-- ── Feedback tab ──────────────────────────────────── -->
+            <template v-if="activeTab === 'feedback'">
+                <div class="bg-white rounded shadow p-6 space-y-3">
+                    <div class="flex justify-between items-center">
+                        <h3 class="font-medium">User Feedback ({{ feedback.length }})</h3>
+                        <div class="flex gap-2">
+                            <button
+                                v-for="f in ['all', 'bug', 'suggestion', 'other']"
+                                :key="f"
+                                @click="feedbackFilter = f"
+                                :class="['text-xs px-2 py-0.5 rounded border transition-colors', feedbackFilter === f ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200']"
+                            >{{ f === 'all' ? 'All' : f }}</button>
+                        </div>
+                    </div>
+                    <div v-if="feedbackLoading" class="text-sm text-gray-500">Loading…</div>
+                    <div v-else-if="feedbackError" class="text-sm text-red-600">{{ feedbackError }}</div>
+                    <div v-else-if="!filteredFeedback.length" class="text-sm text-gray-400 py-4 text-center">No feedback yet.</div>
+                    <ul v-else class="divide-y">
+                        <li v-for="item in filteredFeedback" :key="item.id" class="py-3 flex gap-4 items-start">
+                            <div class="flex-1 min-w-0 space-y-1">
+                                <div class="flex items-center gap-2 flex-wrap">
+                                    <span :class="['text-xs font-semibold px-2 py-0.5 rounded', typeBadgeClass(item.type)]">{{ item.type }}</span>
+                                    <span v-if="item.page" class="text-xs text-gray-400 font-mono truncate">{{ item.page }}</span>
+                                    <span class="text-xs text-gray-400 ml-auto">{{ formatDate(item.created_at) }}</span>
+                                </div>
+                                <p class="text-sm text-gray-800 whitespace-pre-wrap break-words">{{ item.message }}</p>
+                            </div>
+                            <button
+                                @click="deleteFeedback(item.id)"
+                                class="text-xs text-red-400 hover:text-red-600 shrink-0 mt-0.5"
+                            >Delete</button>
+                        </li>
+                    </ul>
+                </div>
+            </template>
+
+            <!-- ── Songs tab ──────────────────────────────────────── -->
+            <template v-if="activeTab === 'songs'">
 
             <!-- Upload form -->
             <div class="bg-white rounded shadow p-6 space-y-4">
@@ -124,6 +175,8 @@
                     </li>
                 </ul>
             </div>
+
+            </template><!-- end songs tab -->
         </div>
 
     </div>
@@ -135,9 +188,64 @@ import { useAdminAuth } from '../composables/useAdminAuth.js';
 
 const { isAuthenticated, tryLogin, logout, apiFetch } = useAdminAuth();
 
+const activeTab = ref('songs');
+
 const passwordInput = ref('');
 const loginError = ref(null);
 const loggingIn = ref(false);
+
+// ── Feedback ──────────────────────────────────────────────────────────
+const feedback        = ref([]);
+const feedbackLoading = ref(false);
+const feedbackError   = ref(null);
+const feedbackFilter  = ref('all');
+
+const filteredFeedback = computed(() =>
+    feedbackFilter.value === 'all'
+        ? feedback.value
+        : feedback.value.filter(f => f.type === feedbackFilter.value)
+);
+
+function typeBadgeClass(type) {
+    if (type === 'bug')        return 'bg-red-100 text-red-700';
+    if (type === 'suggestion') return 'bg-blue-100 text-blue-700';
+    return 'bg-gray-100 text-gray-600';
+}
+
+function formatDate(iso) {
+    return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+async function loadFeedback() {
+    if (feedbackLoading.value) return;
+    feedbackLoading.value = true;
+    feedbackError.value   = null;
+    try {
+        const res = await apiFetch('/api/admin/feedback');
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || 'Failed to load feedback');
+        }
+        feedback.value = await res.json();
+    } catch (e) {
+        if (e.message !== 'Authentication failed') feedbackError.value = e.message;
+    } finally {
+        feedbackLoading.value = false;
+    }
+}
+
+async function deleteFeedback(id) {
+    try {
+        const res = await apiFetch(`/api/admin/feedback/${id}`, { method: 'DELETE' });
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || 'Delete failed');
+        }
+        feedback.value = feedback.value.filter(f => f.id !== id);
+    } catch (e) {
+        if (e.message !== 'Authentication failed') feedbackError.value = e.message;
+    }
+}
 
 const songs = ref([]);
 const loadingList = ref(false);

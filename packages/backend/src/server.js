@@ -16,6 +16,7 @@ import { registerRoomRoutes } from './routes/room-routes.js';
 import { registerRoundRoutes } from './routes/round-routes.js';
 import { registerAudioRoutes } from './routes/audio-routes.js';
 import { registerAdminRoutes } from './routes/admin-routes.js';
+import { registerFeedbackRoutes } from './routes/feedback-routes.js';
 
 const fastify = Fastify();
 
@@ -33,6 +34,7 @@ registerRoomRoutes(fastify, getIo);
 registerRoundRoutes(fastify, getIo);
 registerAudioRoutes(fastify, getIo);
 registerAdminRoutes(fastify);
+registerFeedbackRoutes(fastify);
 
 /**
  * Initialize infrastructure: DB, Redis, Storage

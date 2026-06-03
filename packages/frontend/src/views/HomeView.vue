@@ -55,8 +55,8 @@
       <div class="title-reverse">REVERSE</div>
       <div class="tagline">
         Sing it forward ·&nbsp;
-        <span class="tagline-highlight">Hear it sideways</span>
-        &nbsp;· Guess it backward
+        <span class="tagline-highlight">Reproduce it backwards</span>
+        &nbsp;· Guess what it is
       </div>
     </div>
 
@@ -396,7 +396,7 @@ async function onJoin() {
 /* ── How to play trigger ────────────────────────────────── */
 .htp-trigger {
   position: absolute;
-  bottom: 20px;
+  bottom: 50px;
   right: 24px;
   display: inline-flex;
   align-items: center;

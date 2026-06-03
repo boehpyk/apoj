@@ -50,6 +50,16 @@
       <!-- Page content slot -->
       <slot />
 
+      <!-- Feedback button -->
+      <button class="feedback-trigger" @click="showFeedback = true">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+        Feedback
+      </button>
+
+      <FeedbackModal v-model="showFeedback" />
+
       <!-- Bottom decorative marquee -->
       <div class="status-bar">
         <div class="marquee-track">
@@ -67,8 +77,11 @@
 
 <script setup>
 import { ref, onMounted, onBeforeUnmount } from 'vue';
+import FeedbackModal from './FeedbackModal.vue';
 
 defineProps({});
+
+const showFeedback = ref(false);
 
 const stageEl = ref(null);
 
@@ -189,6 +202,35 @@ onBeforeUnmount(() => {
   right: 28px;
   animation: vr-float 6s ease-in-out 1s infinite;
   pointer-events: none;
+}
+
+/* Feedback button */
+.feedback-trigger {
+  position: absolute;
+  bottom: 50px;
+  left: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 18px;
+  background: rgba(63, 208, 201, 0.1);
+  border: 1.5px solid rgba(63, 208, 201, 0.45);
+  border-radius: 20px;
+  color: rgba(255, 245, 220, 0.75);
+  font-family: "Bowlby One SC", "Bowlby One", Impact, sans-serif;
+  font-size: 12px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  box-shadow: rgba(63, 208, 201, 0.12) 0 0 14px;
+  z-index: 10;
+}
+.feedback-trigger:hover {
+  color: #FFF5DC;
+  border-color: #3FD0C9;
+  background: rgba(63, 208, 201, 0.2);
+  box-shadow: rgba(63, 208, 201, 0.3) 0 0 20px;
 }
 
 /* Bottom decorative marquee */
