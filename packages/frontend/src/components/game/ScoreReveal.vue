@@ -288,7 +288,7 @@ function shareRecap() {
 }
 
 function anotherRound() {
-  if (props.roomCode) router.push('/room/' + props.roomCode);
+  router.push('/');
 }
 
 async function endAndNew() {

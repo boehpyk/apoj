@@ -121,13 +121,6 @@
       <!-- Next round button (for host) -->
       <div class="flex justify-center space-x-4 pt-6">
         <button
-          v-if="isHost"
-          @click="startNextRound"
-          class="px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700"
-        >
-          Start Next Round
-        </button>
-        <button
           @click="backToLobby"
           class="px-6 py-3 bg-gray-600 text-white font-medium rounded-lg hover:bg-gray-700"
         >

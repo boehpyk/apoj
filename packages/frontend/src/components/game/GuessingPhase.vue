@@ -22,7 +22,7 @@
 
       <!-- Clue card -->
       <div class="clue-card" v-if="currentClue">
-        <span class="clue-badge">★ CLUE #{{ displayIdx + 1 }}</span>
+        <span class="clue-badge">★ SONG #{{ displayIdx + 1 }}</span>
 
         <div class="clue-inner">
           <!-- Gold vinyl -->

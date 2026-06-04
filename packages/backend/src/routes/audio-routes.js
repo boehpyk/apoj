@@ -86,6 +86,34 @@ export function registerAudioRoutes(fastify, getIo) {
         }
     });
 
+    // Stream the sample song assigned to a player — for results replay, any round member may access
+    fastify.get('/api/audio/sample/:roundId/:playerId', {config: {rateLimit: {max: 10, timeWindow: '10s'}}}, async (req, reply) => {
+        try {
+            const { roundId, playerId } = req.params;
+            if (!roundId || !playerId) return reply.code(400).send({ error: 'Missing params' });
+
+            const ctx = await resolveAudioContext(req, reply, roundId);
+            if (!ctx) return;
+
+            const res = await query(
+                `SELECT s.audio_file_path
+                 FROM round_player_tracks rpt
+                 JOIN songs s ON s.id = rpt.song_id
+                 WHERE rpt.round_id = $1 AND rpt.player_id = $2`,
+                [roundId, playerId]
+            );
+
+            if (!res.rows.length || !res.rows[0].audio_file_path) {
+                return reply.code(404).send({ error: 'Sample not found' });
+            }
+
+            return streamAudioObject(reply, res.rows[0].audio_file_path, inferAudioMimeType(res.rows[0].audio_file_path));
+        } catch (e) {
+            console.error('[sample audio] error:', e);
+            reply.code(404).send({ error: 'Not found' });
+        }
+    });
+
     // Secure audio streaming by song UUID & assignment validation
     fastify.get('/api/audio/song/:songId', {config: {rateLimit: {max: 5, timeWindow: '10s'}}}, async (req, reply) => {
         try {

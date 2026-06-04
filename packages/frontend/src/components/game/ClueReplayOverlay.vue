@@ -15,7 +15,7 @@
           v-for="clue in enrichedClues"
           :key="clue.clueIndex"
           class="rcard"
-          :class="{ 'rcard--playing': playingIdx === clue.clueIndex }"
+          :class="{ 'rcard--playing': isPlayingClue(clue.clueIndex) }"
         >
 
           <div class="rcard-num">{{ clue.clueIndex + 1 }}</div>
@@ -31,37 +31,42 @@
               <span class="rcard-name rcard-name-teal">{{ clue.imitatorName }}</span>
               <span class="rcard-dim"> made it weird</span>
             </div>
-            <div class="rcard-bar-row">
-              <span class="rcard-time">{{ fmtTime(currentTimes[clue.clueIndex] ?? 0) }}</span>
-              <div class="rcard-bar" @click="seek(clue, $event)">
-                <div class="rcard-bar-fill" :style="{ width: barPct(clue.clueIndex) + '%' }"/>
+
+            <div class="rtrack-list">
+              <div v-for="track in clue.tracks" :key="track.type" class="rtrack">
+                <button
+                  class="rtrack-play-btn"
+                  :class="{ 'rtrack-play-btn--active': playingKey === track.key }"
+                  @click="togglePlay(track)"
+                >
+                  <svg v-if="playingKey === track.key" viewBox="0 0 24 24" width="12" height="12" fill="currentColor">
+                    <rect x="5" y="3" width="4" height="18" rx="1"/>
+                    <rect x="15" y="3" width="4" height="18" rx="1"/>
+                  </svg>
+                  <svg v-else viewBox="0 0 24 24" width="12" height="12" fill="currentColor">
+                    <polygon points="5,3 19,12 5,21"/>
+                  </svg>
+                </button>
+                <span class="rtrack-label" :class="track.type === 'original' ? 'rtrack-label--original' : 'rtrack-label--garbled'">
+                  {{ track.type === 'original' ? 'SAMPLE' : 'GARBLED' }}
+                </span>
+                <span class="rtrack-time">{{ fmtTime(currentTimes[track.key] ?? 0) }}</span>
+                <div class="rtrack-bar" @click="seek(track, $event)">
+                  <div class="rtrack-bar-fill" :style="{ width: barPct(track.key) + '%' }" :class="track.type === 'original' ? 'rtrack-bar-fill--original' : 'rtrack-bar-fill--garbled'"/>
+                </div>
+                <span class="rtrack-time rtrack-time--dur">{{ fmtTime(durations[track.key] ?? 0) }}</span>
+
+                <audio
+                  :ref="el => { if (el) audioEls[track.key] = el; else delete audioEls[track.key]; }"
+                  :src="track.url"
+                  preload="none"
+                  @ended="onEnded(track.key)"
+                  @timeupdate="onTimeUpdate(track.key, $event)"
+                  @durationchange="onDurationChange(track.key, $event)"
+                />
               </div>
-              <span class="rcard-time">{{ fmtTime(durations[clue.clueIndex] ?? 0) }}</span>
             </div>
           </div>
-
-          <button
-            class="rcard-play-btn"
-            :class="{ 'rcard-play-btn--active': playingIdx === clue.clueIndex }"
-            @click="togglePlay(clue)"
-          >
-            <svg v-if="playingIdx === clue.clueIndex" viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-              <rect x="5" y="3" width="4" height="18" rx="1"/>
-              <rect x="15" y="3" width="4" height="18" rx="1"/>
-            </svg>
-            <svg v-else viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-              <polygon points="5,3 19,12 5,21"/>
-            </svg>
-          </button>
-
-          <audio
-            :ref="el => { if (el) audioEls[clue.clueIndex] = el; else delete audioEls[clue.clueIndex]; }"
-            :src="clue.audioUrl"
-            preload="none"
-            @ended="onEnded(clue.clueIndex)"
-            @timeupdate="onTimeUpdate(clue.clueIndex, $event)"
-            @durationchange="onDurationChange(clue.clueIndex, $event)"
-          />
 
         </div>
       </div>
@@ -83,7 +88,7 @@ const props = defineProps({
 const emit = defineEmits(['close']);
 
 const token      = sessionStorage.getItem('playerToken') ?? '';
-const playingIdx = ref(null);
+const playingKey = ref(null); // composite key e.g. "0-original" or "1-garbled"
 const audioEls   = reactive({});
 const currentTimes = reactive({});
 const durations    = reactive({});
@@ -99,21 +104,37 @@ const enrichedClues = computed(() =>
     .map(c => {
       const originalId     = invertedMap.value[c.singerPlayerId];
       const originalPlayer = props.players.find(p => p.id === originalId);
+      const tok            = encodeURIComponent(token);
       return {
         clueIndex:    c.clueIndex,
         songTitle:    c.correctTitle  ?? '',
         songArtist:   c.correctArtist ?? '',
         originalName: originalPlayer?.name  ?? '?',
         imitatorName: c.singerPlayerName    ?? '?',
-        audioUrl:     `/api/audio/final/${props.roundId}/${originalId}?token=${encodeURIComponent(token)}`,
+        tracks: [
+          {
+            type: 'original',
+            key:  `${c.clueIndex}-original`,
+            url:  `/api/audio/sample/${props.roundId}/${originalId}?token=${tok}`,
+          },
+          {
+            type: 'garbled',
+            key:  `${c.clueIndex}-garbled`,
+            url:  `/api/audio/final/${props.roundId}/${originalId}?token=${tok}`,
+          },
+        ],
       };
     })
     .sort((a, b) => a.clueIndex - b.clueIndex)
 );
 
-function barPct(idx) {
-  const t = currentTimes[idx] ?? 0;
-  const d = durations[idx]    ?? 0;
+function isPlayingClue(idx) {
+  return playingKey.value !== null && playingKey.value.startsWith(`${idx}-`);
+}
+
+function barPct(key) {
+  const t = currentTimes[key] ?? 0;
+  const d = durations[key]    ?? 0;
   return d ? (t / d) * 100 : 0;
 }
 
@@ -122,39 +143,39 @@ function fmtTime(secs) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-function togglePlay(clue) {
-  const el = audioEls[clue.clueIndex];
+function togglePlay(track) {
+  const el = audioEls[track.key];
   if (!el) return;
 
-  if (playingIdx.value === clue.clueIndex) {
+  if (playingKey.value === track.key) {
     el.pause();
-    playingIdx.value = null;
+    playingKey.value = null;
     return;
   }
 
-  if (playingIdx.value !== null) {
-    audioEls[playingIdx.value]?.pause();
+  if (playingKey.value !== null) {
+    audioEls[playingKey.value]?.pause();
   }
 
-  playingIdx.value = clue.clueIndex;
+  playingKey.value = track.key;
   el.play().catch(() => {});
 }
 
-function onEnded(idx) {
-  if (playingIdx.value === idx) playingIdx.value = null;
+function onEnded(key) {
+  if (playingKey.value === key) playingKey.value = null;
 }
 
-function onTimeUpdate(idx, e) {
-  currentTimes[idx] = e.target.currentTime;
+function onTimeUpdate(key, e) {
+  currentTimes[key] = e.target.currentTime;
 }
 
-function onDurationChange(idx, e) {
-  durations[idx] = e.target.duration;
+function onDurationChange(key, e) {
+  durations[key] = e.target.duration;
 }
 
-function seek(clue, event) {
-  const el = audioEls[clue.clueIndex];
-  const d  = durations[clue.clueIndex] ?? 0;
+function seek(track, event) {
+  const el = audioEls[track.key];
+  const d  = durations[track.key] ?? 0;
   if (!el || !d) return;
   const rect = event.currentTarget.getBoundingClientRect();
   el.currentTime = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)) * d;
@@ -261,7 +282,7 @@ onBeforeUnmount(() => {
 /* ── Card ────────────────────────────────────────────────── */
 .rcard {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 14px;
   padding: 14px 16px;
   border-radius: 14px;
@@ -281,6 +302,7 @@ onBeforeUnmount(() => {
   min-width: 26px;
   text-align: center;
   flex-shrink: 0;
+  padding-top: 2px;
   transition: color 0.2s;
 }
 .rcard--playing .rcard-num {
@@ -293,7 +315,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
 }
 
 .rcard-song {
@@ -326,44 +348,26 @@ onBeforeUnmount(() => {
 .rcard-name-teal   { color: var(--vr-teal); }
 .rcard-dim { color: rgba(255, 245, 220, 0.35); }
 
-/* Progress row */
-.rcard-bar-row {
+/* ── Track rows ──────────────────────────────────────────── */
+.rtrack-list {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  gap: 5px;
   margin-top: 6px;
 }
 
-.rcard-time {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 10px;
-  color: rgba(255, 245, 220, 0.35);
-  flex-shrink: 0;
-  min-width: 28px;
+.rtrack {
+  display: flex;
+  align-items: center;
+  gap: 7px;
 }
 
-.rcard-bar {
-  flex: 1;
-  height: 4px;
-  background: rgb(58, 27, 92);
-  border-radius: 2px;
-  cursor: pointer;
-}
-
-.rcard-bar-fill {
-  height: 100%;
-  background: var(--vr-teal);
-  border-radius: 2px;
-  transition: width 0.1s linear;
-}
-
-/* Play button */
-.rcard-play-btn {
-  width: 42px;
-  height: 42px;
+.rtrack-play-btn {
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   background: rgb(40, 18, 72);
-  border: 2px solid rgb(70, 35, 110);
+  border: 1.5px solid rgb(70, 35, 110);
   color: rgba(255, 245, 220, 0.6);
   display: flex;
   align-items: center;
@@ -372,15 +376,53 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.1s;
 }
-.rcard-play-btn:hover {
+.rtrack-play-btn:hover {
   background: rgb(63, 208, 201);
   border-color: rgb(63, 208, 201);
   color: rgb(14, 4, 32);
-  transform: scale(1.06);
+  transform: scale(1.08);
 }
-.rcard-play-btn--active {
+.rtrack-play-btn--active {
   background: rgb(63, 208, 201);
   border-color: rgb(63, 208, 201);
   color: rgb(14, 4, 32);
 }
+
+.rtrack-label {
+  font-family: var(--vr-font-ui);
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  flex-shrink: 0;
+  min-width: 52px;
+}
+.rtrack-label--original { color: var(--vr-orange); }
+.rtrack-label--garbled  { color: var(--vr-teal); }
+
+.rtrack-time {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: rgba(255, 245, 220, 0.35);
+  flex-shrink: 0;
+  min-width: 26px;
+}
+.rtrack-time--dur {
+  text-align: right;
+  min-width: 28px;
+}
+
+.rtrack-bar {
+  flex: 1;
+  height: 4px;
+  background: rgb(58, 27, 92);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.rtrack-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.1s linear;
+}
+.rtrack-bar-fill--original { background: var(--vr-orange); }
+.rtrack-bar-fill--garbled  { background: var(--vr-teal); }
 </style>

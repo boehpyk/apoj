@@ -1,5 +1,5 @@
 <template>
-  <TheStage>
+  <TheStage :hide-feedback="isJudging">
     <div class="game-root">
 
       <!-- ── Game Header ─────────────────────────────────────────────── -->
